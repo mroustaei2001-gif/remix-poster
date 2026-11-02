@@ -71,26 +71,41 @@ def clean_artist_name(performer):
     return performer.strip()
 
 async def get_latest_proxy():
-    """بررسی ۵ پست آخر کانال پروکسی با اولویت جدیدترین پست‌های منتشر شده"""
+    """استخراج دقیق و کامل آخرین لینک پروکسی فعال از ۵ پیام اخیر"""
     try:
-        pattern = r'(https?://t\.me/proxy\?[^\s]+|tg://proxy\?[^\s]+)'
         async for msg in user_client.iter_messages(PROXY_CHANNEL, limit=5):
-            # بررسی متن پیام
-            if msg.text:
-                found = re.findall(pattern, msg.text)
-                if found:
-                    return found[0]
-
-            # بررسی دکمه‌های پیام (Inline Buttons)
+            # ۱. اولویت اول: دکمه‌های شیشه‌ای (که معمولاً سالم‌ترین لینک اتصال را دارند)
             if msg.buttons:
                 for row in msg.buttons:
                     for btn in row:
                         if btn.url and ('proxy?' in btn.url):
-                            return btn.url
+                            link = btn.url
+                            if link.startswith('https://t.me/proxy?'):
+                                link = link.replace('https://t.me/proxy?', 'tg://proxy?')
+                            return link
+
+            # ۲. اولویت دوم: موجودیت‌های متن (Entities) تلگرام برای جلوگیری از شکستن URL
+            if msg.entities:
+                for ent, text in msg.get_entities_text():
+                    if hasattr(ent, 'url') and ent.url and ('proxy?' in ent.url):
+                        link = ent.url
+                        if link.startswith('https://t.me/proxy?'):
+                            link = link.replace('https://t.me/proxy?', 'tg://proxy?')
+                        return link
+
+            # ۳. اولویت سوم: ریجکس دقیق از متن پیام
+            if msg.text:
+                found = re.findall(r'(?:https?://t\.me/proxy\?|tg://proxy\?)[^\s<>"\'`]+', msg.text)
+                if found:
+                    link = found[0]
+                    if link.startswith('https://t.me/proxy?'):
+                        link = link.replace('https://t.me/proxy?', 'tg://proxy?')
+                    return link
     except Exception as e:
         print(f"[Proxy Fetch Error] {e}")
 
     return "https://t.me/iRoProxy"
+
 
 def analyze_bpm_and_vibe(sound_segment, track_title=""):
     title_lower = (track_title or "").lower()
