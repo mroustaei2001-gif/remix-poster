@@ -1,5 +1,3 @@
 telethon
 pydub
 mutagen
-pillow
-audioop-lts
