@@ -9,13 +9,12 @@ from mutagen.mp3 import MP3
 from mutagen.id3 import ID3, TIT2, TPE1, COMM, APIC
 
 # --- متغیرهای محیطی در Railway ---
-API_ID = int(os.getenv('API_ID', '0'))
-API_HASH = os.getenv('API_HASH', '')
+API_ID = int(os.getenv('API_ID', '2040'))
+API_HASH = os.getenv('API_HASH', 'b18441a1ff607e10a989891a5462e627')
 BOT_TOKEN = os.getenv('BOT_TOKEN', '')
 STRING_SESSION = os.getenv('STRING_SESSION', '')
 
-
-TARGET_CHANNEL = os.getenv('TARGET_CHANNEL', 'xibopay')
+TARGET_CHANNEL = os.getenv('TARGET_CHANNEL', '@xibopay')
 POST_INTERVAL = int(os.getenv('POST_INTERVAL', '10800'))  # پیش‌فرض ۳ ساعت
 
 SOURCE_CHANNELS = [
@@ -30,7 +29,7 @@ SOURCE_CHANNELS = [
 
 COVER_PATH = "cover.png"
 
-# کلاینت اکانت کاربری برای اسکن و خواندن کانال‌ها
+# کلاینت اکانت کاربری برای اسکن و دانلود از کانال‌های مبدا
 user_client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
 
 # کلاینت بات رسمی برای آپلود و پست در کانال مقصد
@@ -106,7 +105,8 @@ async def scan_sources_cycle():
                         break
 
                     try:
-                        async for msg in bot_client.iter_messages(ch, limit=10):
+                        # اسکن باید با user_client انجام شود نه با bot_client
+                        async for msg in user_client.iter_messages(ch, limit=10):
                             if not msg.audio:
                                 continue
 
@@ -117,7 +117,7 @@ async def scan_sources_cycle():
                                     duration = attr.duration or 0
                                     raw_title = attr.title or ""
 
-                            # فیلتر دموهای کانال منبع (زیر ۱۰۰ ثانیه یا دارای عنوان دمو)
+                            # فیلتر دموهای کانال منبع
                             if duration < 100:
                                 continue
                             if any(w in raw_title.lower() for w in ['demo', 'دمو', 'preview']):
@@ -179,12 +179,12 @@ async def publisher_worker():
                 temp_full = f"full_{msg.id}.mp3"
                 temp_demo = f"demo_{msg.id}.mp3"
 
-                # دانلود توسط کلاینت رسمی ربات
-                await bot_client.download_media(msg, file=temp_full)
+                # دانلود حتماً باید توسط user_client انجام شود
+                await user_client.download_media(msg, file=temp_full)
                 update_metadata_and_cover(temp_full, display_title, display_performer, COVER_PATH)
                 create_demo_snippet(temp_full, temp_demo)
 
-                # متن کپشن دمو (همراه با نقل‌قول مارک‌داون تلگرام و لینک کانال)
+                # متن کپشن دمو
                 caption_demo = (
                     f"**{track_name}**\n"
                     f"Demo🛑⏯️\n\n"
@@ -200,7 +200,7 @@ async def publisher_worker():
                     f"> **🆔 @{clean_target}**"
                 )
 
-                # ارسال نسخه دمو با کاور اختصاصی
+                # ارسال نسخه دمو توسط bot_client
                 await bot_client.send_file(
                     TARGET_CHANNEL,
                     temp_demo,
@@ -212,7 +212,7 @@ async def publisher_worker():
 
                 await asyncio.sleep(3)
 
-                # ارسال نسخه کامل با کاور اختصاصی
+                # ارسال نسخه اصلی توسط bot_client
                 await bot_client.send_file(
                     TARGET_CHANNEL,
                     temp_full,
