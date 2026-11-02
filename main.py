@@ -231,15 +231,21 @@ async def scan_photos_cycle():
     while True:
         try:
             await ensure_connection()
-            if len(PHOTO_QUEUE) < 5:
+            if len(PHOTO_QUEUE) < 6:
                 sources = list(SOURCE_PHOTO_CHANNELS)
                 random.shuffle(sources)
 
                 for ch in sources:
-                    if len(PHOTO_QUEUE) >= 5:
+                    if len(PHOTO_QUEUE) >= 6:
                         break
                     try:
-                        async for msg in user_client.iter_messages(ch, limit=50):
+                        # اسکن عمقی تا ۳۰۰ پست آخر بدون فشار به منابع با استراحت‌های کوتاه
+                        count = 0
+                        async for msg in user_client.iter_messages(ch, limit=300):
+                            count += 1
+                            if count % 30 == 0:
+                                await asyncio.sleep(0.05)
+
                             is_valid_image = False
                             if msg.photo:
                                 is_valid_image = True
@@ -251,11 +257,14 @@ async def scan_photos_cycle():
 
                             caption = (msg.text or "").strip()
 
+                            # نادیده گرفتن تمام لینک‌ها و آیدی‌های کانال PLAYVIBES
                             check_text = caption
                             if ch.lower() == 'playvibes':
-                                check_text = re.sub(r'(https?://)?t\.me/playvibes\S*', '', check_text, flags=re.IGNORECASE)
-                                check_text = re.sub(r'@playvibes', '', check_text, flags=re.IGNORECASE)
+                                check_text = re.sub(r'https?://(?:t\.me|telegram\.me)/(?:c/)?PLAYVIBES(?:/\d+)?', '', check_text, flags=re.IGNORECASE)
+                                check_text = re.sub(r't\.me/PLAYVIBES(?:/\d+)?', '', check_text, flags=re.IGNORECASE)
+                                check_text = re.sub(r'@PLAYVIBES', '', check_text, flags=re.IGNORECASE)
 
+                            # رد کردن در صورت داشتن سایر لینک‌های تبلیغاتی یا جوین‌چت
                             if re.search(r'(https?://|t\.me/|joinchat)', check_text, re.IGNORECASE):
                                 continue
 
@@ -267,7 +276,7 @@ async def scan_photos_cycle():
                             PHOTO_QUEUE.append(msg)
                             log(f"Photo Queued from {ch} (Total: {len(PHOTO_QUEUE)})")
 
-                            if len(PHOTO_QUEUE) >= 5:
+                            if len(PHOTO_QUEUE) >= 6:
                                 break
                     except Exception as err:
                         log(f"Photo Channel Error on {ch}: {err}")
@@ -281,17 +290,16 @@ async def scan_music_cycle():
         try:
             await ensure_connection()
             if len(MUSIC_QUEUE) < 8:
-                sources = list(SOURCE_MUSIC_CHANNELS)
-                random.shuffle(sources)
-                sources.append(FOREIGN_MUSIC_CHANNEL)
-                random.shuffle(sources)
+                all_channels = list(SOURCE_MUSIC_CHANNELS)
+                if FOREIGN_MUSIC_CHANNEL not in all_channels:
+                    all_channels.append(FOREIGN_MUSIC_CHANNEL)
 
-                for ch in sources:
-                    if len(MUSIC_QUEUE) >= 8:
-                        break
+                collected_candidates = []
 
+                # اسکن پست‌های اخیر تمام کانال‌ها
+                for ch in all_channels:
                     try:
-                        async for msg in user_client.iter_messages(ch, limit=50):
+                        async for msg in user_client.iter_messages(ch, limit=15):
                             if not msg.audio:
                                 continue
 
@@ -302,6 +310,7 @@ async def scan_music_cycle():
                                     duration = attr.duration or 0
                                     raw_title = attr.title or ""
 
+                            # فیلتر سقف و کف زمان (۱۰۰ ثانیه تا ۱۰ دقیقه)
                             if duration < 100 or duration > 600:
                                 continue
 
@@ -314,15 +323,29 @@ async def scan_music_cycle():
                             if track_key in SEEN_TRACKS:
                                 continue
 
-                            save_seen_track(track_key)
                             is_foreign = (ch == FOREIGN_MUSIC_CHANNEL)
-                            MUSIC_QUEUE.append((msg, is_foreign))
-                            log(f"Music Queued: {raw_title} ({duration}s) from {ch} (Total: {len(MUSIC_QUEUE)})")
-
-                            if len(MUSIC_QUEUE) >= 8:
-                                break
+                            collected_candidates.append({
+                                'msg': msg,
+                                'is_foreign': is_foreign,
+                                'date': msg.date,
+                                'key': track_key,
+                                'title': raw_title,
+                                'duration': duration,
+                                'channel': ch
+                            })
                     except Exception as ch_err:
-                        log(f"Music Channel Error on {ch}: {ch_err}")
+                        log(f"Music Scan Channel Error on {ch}: {ch_err}")
+
+                # اولویت‌بندی بر اساس جدیدترین زمان انتشار پست موزیک در تلگرام
+                collected_candidates.sort(key=lambda x: x['date'], reverse=True)
+
+                for item in collected_candidates:
+                    if len(MUSIC_QUEUE) >= 10:
+                        break
+                    save_seen_track(item['key'])
+                    MUSIC_QUEUE.append((item['msg'], item['is_foreign']))
+                    log(f"Music Queued (Priority Newest): {item['title']} ({item['duration']}s) from {item['channel']} (Total: {len(MUSIC_QUEUE)})")
+
         except Exception as e:
             log(f"Music Cycle Error: {e}")
 
@@ -425,7 +448,7 @@ async def publisher_worker():
 
                 log("Broadcasting package to channel...")
 
-                # ۱. ارسال تصویر با اسپویلر
+                # ارسال تصویر اسپویلر
                 if INCLUDE_PHOTO_CYCLE and temp_photo:
                     uploaded_photo = await bot_client.upload_file(temp_photo)
                     target_peer = await bot_client.get_input_entity(TARGET_CHANNEL)
@@ -441,7 +464,7 @@ async def publisher_worker():
                     if os.path.exists(temp_photo):
                         os.remove(temp_photo)
 
-                # ۲. ارسال متوالی ویس دمو و موزیک‌ها
+                # ارسال ترتیبی ویس دمو و موزیک‌ها
                 for t in prepared_tracks:
                     await bot_client.send_file(
                         TARGET_CHANNEL,
@@ -462,12 +485,14 @@ async def publisher_worker():
                         attributes=[DocumentAttributeAudio(duration=t["duration"], title=t["display_title"], performer=t["display_performer"])]
                     )
 
+                # پاکسازی فایل‌های موقت
                 for t in prepared_tracks:
                     if os.path.exists(t["temp_demo"]):
                         os.remove(t["temp_demo"])
                     if os.path.exists(t["temp_full"]):
                         os.remove(t["temp_full"])
 
+                # معکوس کردن نوبت ارسال عکس برای چرخه بعدی
                 INCLUDE_PHOTO_CYCLE = not INCLUDE_PHOTO_CYCLE
                 log(f"Batch posted! Next cycle photo status: {INCLUDE_PHOTO_CYCLE}")
 
