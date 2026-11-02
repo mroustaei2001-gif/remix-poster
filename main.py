@@ -356,6 +356,9 @@ async def scan_music_cycle():
 async def publisher_worker():
     while True:
         try:
+            # فعال‌سازی بازه استراحت شبانه در حالت نهایی
+            # await wait_if_night_time()
+
             # بررسی موجود بودن حداقل ۱ عکس و ۲ موزیک در صف
             if len(PHOTO_QUEUE) >= 1 and len(MUSIC_QUEUE) >= 2:
                 print("[Publisher] Preparing batch... Downloading and processing files first.")
@@ -399,7 +402,7 @@ async def publisher_worker():
                     temp_full = f"full_{msg.id}.mp3"
                     temp_demo = f"demo_{msg.id}.mp3"
 
-                    # دانلود و ساخت
+                    # دانلود و اعمال متادیتا
                     await user_client.download_media(msg, file=temp_full)
                     update_metadata_and_cover(temp_full, display_title, display_performer, COVER_PATH)
 
@@ -437,20 +440,22 @@ async def publisher_worker():
                         "display_performer": display_performer
                     })
 
-                # --- مرحله ۳: شلیک همزمان و درجا (ارسال پشت‌سر‌هم بدون تاخیر دانلود) ---
+                # --- مرحله ۳: ارسال همزمان بدون تاخیر ---
                 print("[Publisher] All files ready! Sending batch instantly...")
 
-                # ۱. ارسال تصویر با حالت اسپویلر
+                # ۱. آپلود و ارسال تصویر با اسپویلر تضمینی
+                uploaded_photo = await bot_client.upload_file(temp_photo)
                 await bot_client.send_file(
                     TARGET_CHANNEL,
-                    temp_photo,
+                    uploaded_photo,
                     caption=photo_caption,
                     parse_mode='html',
-                    has_spoiler=True,  # اسپویلر دار بودن تصویر
+                    has_spoiler=True,
+                    force_document=False,
                     silent=True
                 )
 
-                # ۲. ارسال دموها و موزیک‌ها بلافاصله پشت سر هم
+                # ۲. ارسال بلافاصله دموها و موزیک‌ها به ترتیب
                 for t in prepared_tracks:
                     # ارسال دمو
                     await bot_client.send_file(
@@ -461,7 +466,7 @@ async def publisher_worker():
                         silent=True,
                         attributes=[DocumentAttributeAudio(duration=40, title=f"{t['display_title']} (Demo)", performer=t["display_performer"])]
                     )
-                    # ارسال فایل اصلی
+                    # ارسال موزیک کامل با کاور
                     await bot_client.send_file(
                         TARGET_CHANNEL,
                         t["temp_full"],
@@ -472,7 +477,7 @@ async def publisher_worker():
                         attributes=[DocumentAttributeAudio(duration=t["duration"], title=t["display_title"], performer=t["display_performer"])]
                     )
 
-                # پاکسازی فایل‌های موقت پس از اتمام ارسال
+                # پاکسازی فایل‌های موقت هارد پس از اتمام ارسال
                 if os.path.exists(temp_photo):
                     os.remove(temp_photo)
                 for t in prepared_tracks:
@@ -481,12 +486,13 @@ async def publisher_worker():
                     if os.path.exists(t["temp_full"]):
                         os.remove(t["temp_full"])
 
-                print("[Publisher] Successfully posted batch in one go!")
+                print("[Publisher] Successfully posted batch: 1 Spoiler Photo + 2 Music pairs!")
 
         except Exception as e:
             print(f"[Publisher Error] {e}")
 
         await asyncio.sleep(POST_INTERVAL)
+
 
 async def main():
     print("[Init] Connecting user client...")
