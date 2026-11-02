@@ -219,13 +219,12 @@ async def publisher_worker():
                 update_metadata_and_cover(temp_full, display_title, display_performer, COVER_PATH)
                 
                 sound_obj, start_sec = create_demo_snippet(temp_full, temp_demo, start_sec=40, duration_sec=40)
-                bpm, vibe = analyze_bpm_and_vibe(sound_obj)
 
                 # تبدیل ثانیه به فرمت دقیقه و ثانیه (مثلاً 00:40)
                 m, s = divmod(start_sec, 60)
                 timestamp_str = f"{m:02d}:{s:02d}"
 
-                # کپشن نسخه دمو (بدون لوگو، با نقل‌قول صورتی آیدی و عبارت جدید O.file)
+                # کپشن نسخه دمو (بدون لوگو، با نقل‌قول صورتی آیدی و عبارت O.file)
                 caption_demo = (
                     f"<b>name: {track_name}</b>\n"
                     f"<b>Demo⚠️⏯️</b>\n\n"
@@ -233,12 +232,11 @@ async def publisher_worker():
                     f"<b>🛑O.file👇</b>"
                 )
 
-                # کپشن نسخه اصلی همراه با ورس دمو و تایم
+                # کپشن نسخه اصلی با تایم‌لاین مشخص و بدون خط BPM
                 caption_full = (
                     f"<b>name: {track_name}</b>\n"
                     f"<b>full music ✅️⏯️</b>\n\n"
-                    f"<b>⏱️ {timestamp_str} ⇦ ورس دمو</b>\n"
-                    f"<b>🎛 BPM: {bpm} | {vibe}</b>\n\n"
+                    f"<b>🎧 پارت دمو (لمس کنید) ⇦ {timestamp_str}</b>\n\n"
                     f"<blockquote><a href=\"{channel_link}\"><b>🎷&nbsp;&nbsp;معرفی بهترین ریمیکسها&nbsp;&nbsp;🎼</b></a></blockquote>\n"
                     f"<blockquote><b>🆔 @{clean_target}</b></blockquote>"
                 )
@@ -254,7 +252,7 @@ async def publisher_worker():
 
                 await asyncio.sleep(3)
 
-                # ارسال نسخه اصلی (با کاور و تایم‌لاین قابل کلیک)
+                # ارسال نسخه اصلی (با کاور و تایم‌لاین قابل لمس)
                 await bot_client.send_file(
                     TARGET_CHANNEL,
                     temp_full,
