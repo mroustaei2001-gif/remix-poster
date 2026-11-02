@@ -166,6 +166,7 @@ async def publisher_worker():
                 track_name = clean_track_name(raw_title)
                 clean_artist = clean_artist_name(raw_performer)
                 clean_target = TARGET_CHANNEL.replace('@', '').replace('https://t.me/', '')
+                channel_link = f"https://t.me/{clean_target}"
 
                 # تنظیم نام و خواننده در پلیر تلگرام
                 if clean_artist:
@@ -178,25 +179,25 @@ async def publisher_worker():
                 temp_full = f"full_{msg.id}.mp3"
                 temp_demo = f"demo_{msg.id}.mp3"
 
-                # دانلود قطعه توسط کلاینت اکانت کاربری
+                # دانلود توسط کلاینت اکانت کاربری
                 await user_client.download_media(msg, file=temp_full)
                 update_metadata_and_cover(temp_full, display_title, display_performer, COVER_PATH)
                 create_demo_snippet(temp_full, temp_demo)
 
-                # متن کپشن دمو (بدون لوگو، با نقل‌قول مارک‌داون و بولد)
+                # متن کپشن دمو (بدون لوگو، تماماً بولد، با نقل‌قول رنگی آیدی)
                 caption_demo = (
-                    f"name: {track_name}\n"
-                    f"Demo⚠️⏯️\n"
-                    f"> **🆔 @{clean_target}**\n"
-                    f"org.m👇"
+                    f"<b>name: {track_name}</b>\n"
+                    f"<b>Demo⚠️⏯️</b>\n\n"
+                    f"<blockquote><b>🆔 @{clean_target}</b></blockquote>\n\n"
+                    f"<b>org.m👇</b>"
                 )
 
-                # متن کپشن نسخه اصلی (همراه با معرفی و آیدی داخل نقل‌قول و بولد)
+                # متن کپشن نسخه اصلی (تماماً بولد، متن معرفی لینک‌دار کانال و آیدی درون کادر نقل‌قول رنگی)
                 caption_full = (
-                    f"name: {track_name}\n"
-                    f"full music ✅️⏯️\n\n"
-                    f"> **معرفی بهترین ریمیکسها 🎼🎷**\n"
-                    f"> **🆔 @{clean_target}**"
+                    f"<b>name: {track_name}</b>\n"
+                    f"<b>full music ✅️⏯️</b>\n\n"
+                    f"<blockquote><a href=\"{channel_link}\"><b>معرفی بهترین ریمیکسها 🎼🎷</b></a>\n"
+                    f"<b>🆔 @{clean_target}</b></blockquote>"
                 )
 
                 # ارسال نسخه دمو (بدون thumb برای حذف لوگو)
@@ -204,18 +205,18 @@ async def publisher_worker():
                     TARGET_CHANNEL,
                     temp_demo,
                     caption=caption_demo,
-                    parse_mode='md',
+                    parse_mode='html',
                     attributes=[DocumentAttributeAudio(duration=40, title=f"{track_name} (Demo)", performer=display_performer)]
                 )
 
                 await asyncio.sleep(3)
 
-                # ارسال نسخه اصلی (با کاور و اطلاعات کامل)
+                # ارسال نسخه اصلی (با کاور و با parse_mode html)
                 await bot_client.send_file(
                     TARGET_CHANNEL,
                     temp_full,
                     caption=caption_full,
-                    parse_mode='md',
+                    parse_mode='html',
                     thumb=COVER_PATH if os.path.exists(COVER_PATH) else None,
                     attributes=[DocumentAttributeAudio(duration=duration, title=display_title, performer=display_performer)]
                 )
@@ -229,6 +230,7 @@ async def publisher_worker():
             print(f"[Publisher Error] {e}")
 
         await asyncio.sleep(POST_INTERVAL)
+
 
 async def main():
     # روشن کردن کلاینت اکانت برای خواندن کانال‌ها
