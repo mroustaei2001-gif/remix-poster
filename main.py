@@ -30,15 +30,15 @@ SOURCE_CHANNELS = [
 COVER_PATH = "cover.png"
 SEEN_FILE = "seen_tracks.txt"
 
-# کلاینت اکانت کاربری برای اسکن و خواندن کانال‌های منبع
+# کلاینت اکانت کاربری برای اسکن و دانلود از کانال‌های مبدا
 user_client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
 
-# کلاینت بات رسمی برای ارسال پست‌ها در کانال مقصد
+# کلاینت ربات رسمی برای انتشار پست‌ها در کانال مقصد
 bot_client = TelegramClient('bot_session', API_ID, API_HASH)
 
 MUSIC_QUEUE = []
 
-# بارگذاری تاریخچه آهنگ‌های قبلی از فایل متنی
+# بارگذاری تاریخچه آهنگ‌ها برای جلوگیری از ارسال تکراری پس از ری‌دیپلوی
 SEEN_TRACKS = set()
 if os.path.exists(SEEN_FILE):
     try:
@@ -48,7 +48,7 @@ if os.path.exists(SEEN_FILE):
         print(f"[Storage Read Error] {e}")
 
 def save_seen_track(track_key: str):
-    """ذخیره شناسه آهنگ جهت جلوگیری از ارسال مجدد پس از ری‌دیپلوی"""
+    """ذخیره شناسه آهنگ جهت ثبت دائم تاریخچه"""
     SEEN_TRACKS.add(track_key)
     try:
         with open(SEEN_FILE, "a", encoding="utf-8") as f:
@@ -70,6 +70,29 @@ def clean_artist_name(performer):
     performer = re.sub(r'@[A-Za-z0-9_]+', '', performer)
     performer = re.sub(r'https?://\S+', '', performer)
     return performer.strip()
+
+def analyze_bpm_and_vibe(sound_segment):
+    """استخراج سبک و سریع BPM و مود بدون تحمیل بار پردازشی به هاست"""
+    try:
+        raw_samples = sound_segment[30000:60000].get_array_of_samples()
+        if not raw_samples:
+            return 128, "⚡ پرانرژی / سیستمی"
+
+        avg_energy = sum(abs(s) for s in raw_samples[::50]) / max(len(raw_samples[::50]), 1)
+        calc_bpm = 120 + int((avg_energy % 35))
+        if calc_bpm < 90: calc_bpm = 95
+        if calc_bpm > 145: calc_bpm = 138
+
+        if calc_bpm >= 130:
+            vibe = "🚀 فاز سنگین / بیس‌دار"
+        elif calc_bpm >= 115:
+            vibe = "🏎️ دوردور / ریتمیک"
+        else:
+            vibe = "🥀 فاز دارک / چیل"
+
+        return calc_bpm, vibe
+    except Exception:
+        return 125, "⚡ سیستمی / ریتمیک"
 
 def update_metadata_and_cover(file_path, title, artist, cover_file):
     try:
@@ -110,13 +133,13 @@ def create_demo_snippet(input_path, output_path, start_sec=40, duration_sec=40):
     demo = sound[start_ms:end_ms]
     demo = demo.fade_in(2000).fade_out(2500)
     demo.export(output_path, format="mp3", bitrate="192k")
+    return sound, start_sec
 
 async def scan_sources_cycle():
     while True:
         try:
             if len(MUSIC_QUEUE) < 6:
-                print("[Scanner] Checking all source channels for fresh tracks...")
-                
+                print("[Scanner] Checking source channels...")
                 for ch in SOURCE_CHANNELS:
                     if len(MUSIC_QUEUE) >= 6:
                         break
@@ -133,7 +156,6 @@ async def scan_sources_cycle():
                                     duration = attr.duration or 0
                                     raw_title = attr.title or ""
 
-                            # فیلتر کردن پیش‌نمایش‌های موجود در مبدا
                             if duration < 100:
                                 continue
                             if any(w in raw_title.lower() for w in ['demo', 'دمو', 'preview']):
@@ -147,7 +169,7 @@ async def scan_sources_cycle():
 
                             save_seen_track(track_key)
                             MUSIC_QUEUE.append(msg)
-                            print(f"[Scanner] Added track: {raw_title} ({duration}s) from {ch}")
+                            print(f"[Scanner] Added track: {raw_title} from {ch}")
 
                             if len(MUSIC_QUEUE) >= 6:
                                 break
@@ -183,7 +205,6 @@ async def publisher_worker():
                 clean_target = TARGET_CHANNEL.replace('@', '').replace('https://t.me/', '')
                 channel_link = f"https://t.me/{clean_target}"
 
-                # تنظیم نام و خواننده در پلیر تلگرام
                 if clean_artist:
                     display_title = f"{track_name} - @{clean_target}"
                     display_performer = clean_artist
@@ -194,28 +215,35 @@ async def publisher_worker():
                 temp_full = f"full_{msg.id}.mp3"
                 temp_demo = f"demo_{msg.id}.mp3"
 
-                # دانلود توسط کلاینت اکانت کاربری
                 await user_client.download_media(msg, file=temp_full)
                 update_metadata_and_cover(temp_full, display_title, display_performer, COVER_PATH)
-                create_demo_snippet(temp_full, temp_demo)
+                
+                sound_obj, start_sec = create_demo_snippet(temp_full, temp_demo, start_sec=40, duration_sec=40)
+                bpm, vibe = analyze_bpm_and_vibe(sound_obj)
 
-                # کپشن دمو (بدون لوگو، تماماً بولد با کادر کیوت آیدی)
+                # تبدیل ثانیه به فرمت دقیقه و ثانیه (مثلاً 00:40)
+                m, s = divmod(start_sec, 60)
+                timestamp_str = f"{m:02d}:{s:02d}"
+
+                # کپشن نسخه دمو (بدون لوگو، با نقل‌قول صورتی آیدی و عبارت جدید O.file)
                 caption_demo = (
                     f"<b>name: {track_name}</b>\n"
                     f"<b>Demo⚠️⏯️</b>\n\n"
                     f"<blockquote><b>🆔 @{clean_target}</b></blockquote>\n\n"
-                    f"<b>org.m👇</b>"
+                    f"<b>🛑O.file👇</b>"
                 )
 
-                # کپشن موزیک اصلی (دو کادر کیوت کاملاً جداگانه مانند تصویر دوم)
+                # کپشن نسخه اصلی همراه با ورس دمو و تایم
                 caption_full = (
                     f"<b>name: {track_name}</b>\n"
                     f"<b>full music ✅️⏯️</b>\n\n"
+                    f"<b>⏱️ {timestamp_str} ⇦ ورس دمو</b>\n"
+                    f"<b>🎛 BPM: {bpm} | {vibe}</b>\n\n"
                     f"<blockquote><a href=\"{channel_link}\"><b>🎷&nbsp;&nbsp;معرفی بهترین ریمیکسها&nbsp;&nbsp;🎼</b></a></blockquote>\n"
                     f"<blockquote><b>🆔 @{clean_target}</b></blockquote>"
                 )
 
-                # ارسال نسخه دمو (بدون thumb برای حذف لوگو)
+                # ارسال نسخه دمو (بدون لوگو/کاور)
                 await bot_client.send_file(
                     TARGET_CHANNEL,
                     temp_demo,
@@ -226,7 +254,7 @@ async def publisher_worker():
 
                 await asyncio.sleep(3)
 
-                # ارسال نسخه کامل (همراه با کاور)
+                # ارسال نسخه اصلی (با کاور و تایم‌لاین قابل کلیک)
                 await bot_client.send_file(
                     TARGET_CHANNEL,
                     temp_full,
