@@ -27,11 +27,9 @@ API_HASH = os.getenv('API_HASH', 'b18441a1ff607e10a989891a5462e627')
 BOT_TOKEN = os.getenv('BOT_TOKEN', '')
 STRING_SESSION = os.getenv('STRING_SESSION', '')
 
-# کانال اصلی مقصد
 TARGET_CHANNEL = os.getenv('TARGET_CHANNEL', '@remixiyu')
 PROXY_CHANNEL = 'iRoProxy'
 
-# ساعات مشخص ارسال به وقت ایران: ۱۰ صبح، ۲ بعدازظهر، ۶ عصر، ۱۰ شب و آخرین پست ۲ بامداد
 SCHEDULE_HOURS = [2, 10, 14, 18, 22]
 
 SOURCE_MUSIC_CHANNELS = [
@@ -119,7 +117,6 @@ def clean_artist_name(performer):
 async def ensure_connection():
     if not user_client.is_connected():
         try:
-            log("Reconnecting user client...")
             await user_client.connect()
         except Exception as e:
             log(f"Reconnect Error: {e}")
@@ -361,7 +358,6 @@ async def publisher_worker():
             current_hour = now.hour
             current_minute = now.minute
 
-            # انتشار فقط در دقیقه ۰۰ از ساعات هدف: 2, 10, 14, 18, 22
             if current_hour in SCHEDULE_HOURS and current_minute == 0:
                 slot_key = f"{now.strftime('%Y-%m-%d')}_{current_hour}"
                 if last_processed_slot != slot_key:
@@ -370,7 +366,6 @@ async def publisher_worker():
 
                     retry_wait = 0
                     while (len(MUSIC_QUEUE) < 2 or (INCLUDE_PHOTO_CYCLE and len(PHOTO_QUEUE) < 1)) and retry_wait < 12:
-                        log(f"Waiting for scan queues... Photos: {len(PHOTO_QUEUE)}, Music: {len(MUSIC_QUEUE)}")
                         await asyncio.sleep(10)
                         retry_wait += 1
 
@@ -497,17 +492,10 @@ async def publisher_worker():
                         INCLUDE_PHOTO_CYCLE = not INCLUDE_PHOTO_CYCLE
                         last_processed_slot = slot_key
                         log(f"Broadcast successful! Next slot photo status: {INCLUDE_PHOTO_CYCLE}")
-                    else:
-                        log("Queue lacked enough tracks, skipping broadcast slot.")
-            else:
-                # لاگ پینگ داخلی فقط در کنسول ریل‌وی جهت زنده‌ماندن کانتینر (هیچ پیامی به کانال تلگرام نمی‌رود)
-                if current_minute in [0, 30]:
-                    log(f"[Heartbeat] Active. Waiting for next schedule slot. Queues: {len(PHOTO_QUEUE)} photos, {len(MUSIC_QUEUE)} tracks.")
 
         except Exception as e:
             log(f"Publisher Worker Error: {e}")
 
-        # بررسی وضعیت هر ۴۰ ثانیه
         await asyncio.sleep(40)
 
 async def main():
@@ -530,7 +518,8 @@ async def main():
     asyncio.create_task(scan_music_cycle())
     asyncio.create_task(publisher_worker())
 
-    await bot_client.run_until_disconnected()
+    while True:
+        await asyncio.sleep(3600)
 
 if __name__ == '__main__':
     asyncio.run(main())
