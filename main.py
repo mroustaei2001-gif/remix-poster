@@ -2,6 +2,7 @@ import os
 import asyncio
 import re
 from telethon import TelegramClient
+from telethon.sessions import StringSession
 from telethon.tl.types import DocumentAttributeAudio
 from pydub import AudioSegment
 from mutagen.mp3 import MP3
