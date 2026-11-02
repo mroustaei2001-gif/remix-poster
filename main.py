@@ -11,6 +11,8 @@ from mutagen.id3 import ID3, TIT2, TPE1, COMM, APIC
 API_ID = int(os.getenv('API_ID', '0'))
 API_HASH = os.getenv('API_HASH', '')
 BOT_TOKEN = os.getenv('BOT_TOKEN', '')
+STRING_SESSION = os.getenv('STRING_SESSION', '')
+
 
 TARGET_CHANNEL = os.getenv('TARGET_CHANNEL', 'xibopay')
 POST_INTERVAL = int(os.getenv('POST_INTERVAL', '10800'))  # پیش‌فرض ۳ ساعت
@@ -27,7 +29,10 @@ SOURCE_CHANNELS = [
 
 COVER_PATH = "cover.png"
 
-# فقط یک کلاینت رسمی ربات بدون نیاز به سلف و سشن استرینگ
+# کلاینت اکانت کاربری برای اسکن و خواندن کانال‌ها
+user_client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
+
+# کلاینت بات رسمی برای آپلود و پست در کانال مقصد
 bot_client = TelegramClient('bot_session', API_ID, API_HASH)
 
 MUSIC_QUEUE = []
@@ -227,8 +232,13 @@ async def publisher_worker():
         await asyncio.sleep(POST_INTERVAL)
 
 async def main():
+    # روشن کردن کلاینت اکانت برای خواندن کانال‌ها
+    await user_client.start()
+    print("User Client is online and connected!")
+
+    # روشن کردن کلاینت ربات رسمی برای انتشار پست‌ها
     await bot_client.start(bot_token=BOT_TOKEN)
-    print("Channel Bot is online and running standalone.")
+    print("Channel Bot is online and running...")
 
     asyncio.create_task(scan_sources_cycle())
     asyncio.create_task(publisher_worker())
