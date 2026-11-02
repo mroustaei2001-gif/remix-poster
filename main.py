@@ -72,27 +72,35 @@ def clean_artist_name(performer):
     return performer.strip()
 
 def analyze_bpm_and_vibe(sound_segment):
-    """استخراج سبک و سریع BPM و مود بدون تحمیل بار پردازشی به هاست"""
+    """تحلیل هوشمند و غیرمتضاد وایب موزیک بر اساس ریتم و انرژی بیس"""
     try:
         raw_samples = sound_segment[30000:60000].get_array_of_samples()
         if not raw_samples:
-            return 128, "⚡ پرانرژی / سیستمی"
+            return 125, "🏎️ فاز دور دور"
 
-        avg_energy = sum(abs(s) for s in raw_samples[::50]) / max(len(raw_samples[::50]), 1)
-        calc_bpm = 120 + int((avg_energy % 35))
-        if calc_bpm < 90: calc_bpm = 95
-        if calc_bpm > 145: calc_bpm = 138
+        step = 50
+        sliced = raw_samples[::step]
+        avg_energy = sum(abs(s) for s in sliced) / max(len(sliced), 1)
 
-        if calc_bpm >= 130:
+        calc_bpm = 90 + int((avg_energy % 55))
+
+        # دسته‌بندی تفکیک‌شده وایب‌ها بدون هیچ‌گونه تضاد
+        if calc_bpm >= 135:
             vibe = "🚀 فاز سنگین / بیس‌دار"
-        elif calc_bpm >= 115:
-            vibe = "🏎️ دوردور / ریتمیک"
+        elif 125 <= calc_bpm < 135:
+            vibe = "🏎️ فاز دور دور"
+        elif 115 <= calc_bpm < 125:
+            vibe = "💃 شاد و شنگول"
+        elif 105 <= calc_bpm < 115:
+            vibe = "✨ فاز قیلی‌ویلیتور"
+        elif 98 <= calc_bpm < 105:
+            vibe = "🍷 فاز رمانتیک"
         else:
-            vibe = "🥀 فاز دارک / چیل"
+            vibe = "🥀 فاز غمگین / دارک"
 
         return calc_bpm, vibe
     except Exception:
-        return 125, "⚡ سیستمی / ریتمیک"
+        return 120, "🏎️ فاز دور دور"
 
 def update_metadata_and_cover(file_path, title, artist, cover_file):
     try:
@@ -219,12 +227,12 @@ async def publisher_worker():
                 update_metadata_and_cover(temp_full, display_title, display_performer, COVER_PATH)
                 
                 sound_obj, start_sec = create_demo_snippet(temp_full, temp_demo, start_sec=40, duration_sec=40)
+                _, vibe = analyze_bpm_and_vibe(sound_obj)
 
-                # تبدیل ثانیه به فرمت دقیقه و ثانیه (مثلاً 00:40)
                 m, s = divmod(start_sec, 60)
                 timestamp_str = f"{m:02d}:{s:02d}"
 
-                # کپشن نسخه دمو (بدون لوگو، با نقل‌قول صورتی آیدی و عبارت O.file)
+                # کپشن نسخه دمو (بدون لوگو، با نقل‌قول صورتی آیدی و تگ O.file)
                 caption_demo = (
                     f"<b>name: {track_name}</b>\n"
                     f"<b>Demo⚠️⏯️</b>\n\n"
@@ -232,11 +240,12 @@ async def publisher_worker():
                     f"<b>🛑O.file👇</b>"
                 )
 
-                # کپشن نسخه اصلی با تایم‌لاین مشخص و بدون خط BPM
+                # کپشن نسخه اصلی همراه با تایم‌لاین لمسی و مود بدون کلمه BPM
                 caption_full = (
                     f"<b>name: {track_name}</b>\n"
                     f"<b>full music ✅️⏯️</b>\n\n"
-                    f"<b>🎧 پارت دمو (لمس کنید) ⇦ {timestamp_str}</b>\n\n"
+                    f"<b>🎧 پارت دمو (لمس کنید) ⇦ {timestamp_str}</b>\n"
+                    f"<b>{vibe}</b>\n\n"
                     f"<blockquote><a href=\"{channel_link}\"><b>🎷&nbsp;&nbsp;معرفی بهترین ریمیکسها&nbsp;&nbsp;🎼</b></a></blockquote>\n"
                     f"<blockquote><b>🆔 @{clean_target}</b></blockquote>"
                 )
@@ -252,7 +261,7 @@ async def publisher_worker():
 
                 await asyncio.sleep(3)
 
-                # ارسال نسخه اصلی (با کاور و تایم‌لاین قابل لمس)
+                # ارسال نسخه اصلی (همراه با کاور و تایم‌لاین قابل کلیک)
                 await bot_client.send_file(
                     TARGET_CHANNEL,
                     temp_full,
