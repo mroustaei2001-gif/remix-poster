@@ -166,7 +166,6 @@ async def publisher_worker():
                 track_name = clean_track_name(raw_title)
                 clean_artist = clean_artist_name(raw_performer)
                 clean_target = TARGET_CHANNEL.replace('@', '').replace('https://t.me/', '')
-                channel_link = f"https://t.me/{clean_target}"
 
                 # تنظیم نام و خواننده در پلیر تلگرام
                 if clean_artist:
@@ -179,40 +178,39 @@ async def publisher_worker():
                 temp_full = f"full_{msg.id}.mp3"
                 temp_demo = f"demo_{msg.id}.mp3"
 
-                # دانلود حتماً باید توسط user_client انجام شود
+                # دانلود قطعه توسط کلاینت اکانت کاربری
                 await user_client.download_media(msg, file=temp_full)
                 update_metadata_and_cover(temp_full, display_title, display_performer, COVER_PATH)
                 create_demo_snippet(temp_full, temp_demo)
 
-                # متن کپشن دمو
+                # متن کپشن دمو (بدون لوگو، با نقل‌قول مارک‌داون و بولد)
                 caption_demo = (
-                    f"**{track_name}**\n"
-                    f"Demo🛑⏯️\n\n"
-                    f"> [معرفی بهترین ریمیکسها 🎼🎷]({channel_link})\n"
-                    f"> **🆔 @{clean_target}**"
+                    f"name: {track_name}\n"
+                    f"Demo⚠️⏯️\n"
+                    f"> **🆔 @{clean_target}**\n"
+                    f"org.m👇"
                 )
 
-                # متن کپشن نسخه اصلی
+                # متن کپشن نسخه اصلی (همراه با معرفی و آیدی داخل نقل‌قول و بولد)
                 caption_full = (
-                    f"**{track_name}**\n"
+                    f"name: {track_name}\n"
                     f"full music ✅️⏯️\n\n"
-                    f"> [معرفی بهترین ریمیکسها 🎼🛑]({channel_link})\n"
+                    f"> **معرفی بهترین ریمیکسها 🎼🎷**\n"
                     f"> **🆔 @{clean_target}**"
                 )
 
-                # ارسال نسخه دمو توسط bot_client
+                # ارسال نسخه دمو (بدون thumb برای حذف لوگو)
                 await bot_client.send_file(
                     TARGET_CHANNEL,
                     temp_demo,
                     caption=caption_demo,
                     parse_mode='md',
-                    thumb=COVER_PATH if os.path.exists(COVER_PATH) else None,
                     attributes=[DocumentAttributeAudio(duration=40, title=f"{track_name} (Demo)", performer=display_performer)]
                 )
 
                 await asyncio.sleep(3)
 
-                # ارسال نسخه اصلی توسط bot_client
+                # ارسال نسخه اصلی (با کاور و اطلاعات کامل)
                 await bot_client.send_file(
                     TARGET_CHANNEL,
                     temp_full,
