@@ -2,8 +2,6 @@ import os
 import asyncio
 import re
 import io
-import random
-from datetime import datetime, timezone, timedelta
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.types import DocumentAttributeAudio
@@ -13,14 +11,14 @@ from mutagen.mp3 import MP3
 from mutagen.id3 import ID3, TIT2, TPE1, COMM, APIC
 from PIL import Image
 
-# --- تنظیمات تستی ---
+# --- تنظیمات متغیرهای محیطی ---
 API_ID = int(os.getenv('API_ID', '2040'))
 API_HASH = os.getenv('API_HASH', 'b18441a1ff607e10a989891a5462e627')
 BOT_TOKEN = os.getenv('BOT_TOKEN', '')
 STRING_SESSION = os.getenv('STRING_SESSION', '')
 
 TARGET_CHANNEL = os.getenv('TARGET_CHANNEL', '@xibopay')
-POST_INTERVAL = int(os.getenv('POST_INTERVAL', '15'))  # تست سریع: هر ۱۵ ثانیه یک پست
+POST_INTERVAL = int(os.getenv('POST_INTERVAL', '15'))  # زمان تست سریع
 PROXY_CHANNEL = 'iRoProxy'
 
 SOURCE_CHANNELS = [
@@ -72,23 +70,26 @@ def clean_artist_name(performer):
     performer = re.sub(r'https?://\S+', '', performer)
     return performer.strip()
 
-async def get_random_proxy():
+async def get_latest_proxy():
+    """بررسی ۵ پست آخر کانال پروکسی با اولویت جدیدترین پست‌های منتشر شده"""
     try:
-        proxies = []
         pattern = r'(https?://t\.me/proxy\?[^\s]+|tg://proxy\?[^\s]+)'
-        async for msg in user_client.iter_messages(PROXY_CHANNEL, limit=20):
+        async for msg in user_client.iter_messages(PROXY_CHANNEL, limit=5):
+            # بررسی متن پیام
             if msg.text:
                 found = re.findall(pattern, msg.text)
-                proxies.extend(found)
+                if found:
+                    return found[0]
+
+            # بررسی دکمه‌های پیام (Inline Buttons)
             if msg.buttons:
                 for row in msg.buttons:
                     for btn in row:
                         if btn.url and ('proxy?' in btn.url):
-                            proxies.append(btn.url)
-        if proxies:
-            return random.choice(proxies)
+                            return btn.url
     except Exception as e:
         print(f"[Proxy Fetch Error] {e}")
+
     return "https://t.me/iRoProxy"
 
 def analyze_bpm_and_vibe(sound_segment, track_title=""):
@@ -115,7 +116,7 @@ def analyze_bpm_and_vibe(sound_segment, track_title=""):
 
         bass_audio = sample_audio.set_channels(1).low_pass_filter(160)
         samples = bass_audio.get_array_of_samples()
-        
+
         if not samples:
             return 115, "🏎️ فاز دور دور"
 
@@ -295,7 +296,8 @@ async def publisher_worker():
                 sound_obj, start_sec = create_demo_snippet(temp_full, temp_demo, start_sec=40, duration_sec=40)
                 _, vibe = analyze_bpm_and_vibe(sound_obj, track_title=track_name)
 
-                proxy_link = await get_random_proxy()
+                # دریافت جدیدترین پروکسی فعال از ۵ پست اخیر
+                proxy_link = await get_latest_proxy()
 
                 m, s = divmod(start_sec, 60)
                 timestamp_str = f"{m:02d}:{s:02d}"
@@ -307,13 +309,14 @@ async def publisher_worker():
                     f"<b>🛑O.file👇</b>"
                 )
 
+                # کلمه proxy زیر full music به صورت بولد و لینک‌دار بدون کیوت
                 caption_full = (
                     f"<b>name: {track_name}</b>\n"
-                    f"<b>full music ✅️⏯️</b>\n\n"
+                    f"<b>full music ✅️⏯️</b>\n"
+                    f"<a href=\"{proxy_link}\"><b>proxy</b></a>\n\n"
                     f"<b>🎧 پارت دمو (لمس کنید) ⇦ {timestamp_str}</b>\n"
                     f"<b>{vibe}</b>\n\n"
                     f"<blockquote><a href=\"{channel_link}\"><b>🎷&nbsp;&nbsp;معرفی بهترین ریمیکسها&nbsp;&nbsp;🎼</b></a></blockquote>\n"
-                    f"<blockquote><a href=\"{proxy_link}\"><b>⚡️ اتصال به پروکسی اختصاصی ⚡️</b></a></blockquote>\n"
                     f"<blockquote><b>🆔 @{clean_target}</b></blockquote>"
                 )
 
