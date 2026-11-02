@@ -110,8 +110,17 @@ def clean_artist_name(performer):
     performer = re.sub(r'https?://\S+', '', performer)
     return performer.strip()
 
+async def ensure_connection():
+    if not user_client.is_connected():
+        try:
+            log("Reconnecting user client...")
+            await user_client.connect()
+        except Exception as e:
+            log(f"Reconnect Error: {e}")
+
 async def get_latest_proxy():
     try:
+        await ensure_connection()
         async for msg in user_client.iter_messages(PROXY_CHANNEL, limit=5):
             if msg.buttons:
                 for row in msg.buttons:
@@ -202,11 +211,17 @@ def update_metadata_and_cover(file_path, title, artist, cover_file):
 
 def create_demo_voice_ffmpeg(input_path, output_path, start_sec=40, duration_sec=40):
     cmd = [
-        "ffmpeg", "-y", "-ss", str(start_sec), "-t", str(duration_sec),
+        "ffmpeg", "-y",
+        "-ss", str(start_sec),
+        "-t", str(duration_sec),
         "-i", input_path,
-        "-c:a", "libopus", "-b:a", "32k", "-vbr", "on",
-        "-ar", "48000", "-ac", "1",
-        "-af", "afade=t=in:ss=0:d=1.5,afade=t=out:st=38:d=2",
+        "-vn",
+        "-c:a", "libopus",
+        "-b:a", "48k",
+        "-ar", "48000",
+        "-ac", "1",
+        "-application", "voip",
+        "-af", "afade=t=in:ss=0:d=1,afade=t=out:st=38:d=2",
         output_path
     ]
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -215,6 +230,7 @@ def create_demo_voice_ffmpeg(input_path, output_path, start_sec=40, duration_sec
 async def scan_photos_cycle():
     while True:
         try:
+            await ensure_connection()
             if len(PHOTO_QUEUE) < 5:
                 sources = list(SOURCE_PHOTO_CHANNELS)
                 random.shuffle(sources)
@@ -235,13 +251,11 @@ async def scan_photos_cycle():
 
                             caption = (msg.text or "").strip()
 
-                            # نادیده گرفتن منشن‌های خود پلی‌وایبز در کانال خودش
                             check_text = caption
                             if ch.lower() == 'playvibes':
                                 check_text = re.sub(r'(https?://)?t\.me/playvibes\S*', '', check_text, flags=re.IGNORECASE)
                                 check_text = re.sub(r'@playvibes', '', check_text, flags=re.IGNORECASE)
 
-                            # رد کردن در صورت وجود لینک‌های متفرقه یا دعوت‌نامه
                             if re.search(r'(https?://|t\.me/|joinchat)', check_text, re.IGNORECASE):
                                 continue
 
@@ -260,11 +274,12 @@ async def scan_photos_cycle():
         except Exception as e:
             log(f"Photo Cycle Error: {e}")
 
-        await asyncio.sleep(10)
+        await asyncio.sleep(25)
 
 async def scan_music_cycle():
     while True:
         try:
+            await ensure_connection()
             if len(MUSIC_QUEUE) < 8:
                 sources = list(SOURCE_MUSIC_CHANNELS)
                 random.shuffle(sources)
@@ -311,7 +326,7 @@ async def scan_music_cycle():
         except Exception as e:
             log(f"Music Cycle Error: {e}")
 
-        await asyncio.sleep(10)
+        await asyncio.sleep(25)
 
 async def publisher_worker():
     global INCLUDE_PHOTO_CYCLE
@@ -329,6 +344,7 @@ async def publisher_worker():
 
             if can_publish:
                 log("Batch limits reached! Preparing delivery...")
+                await ensure_connection()
 
                 clean_target = TARGET_CHANNEL.replace('@', '').replace('https://t.me/', '')
                 channel_link = f"https://t.me/{clean_target}"
@@ -339,7 +355,6 @@ async def publisher_worker():
                     photo_msg = PHOTO_QUEUE.pop(0)
                     temp_photo = f"photo_{photo_msg.id}.jpg"
                     await user_client.download_media(photo_msg, file=temp_photo)
-                    # کپشن فقط آیدی و لینک کانال شما
                     photo_caption = f'<blockquote><a href="{channel_link}"><b>🆔 @{clean_target}</b></a></blockquote>'
 
                 prepared_tracks = []
@@ -381,8 +396,12 @@ async def publisher_worker():
                     m, s = divmod(start_sec, 60)
                     timestamp_str = f"{m:02d}:{s:02d}"
 
-                    # کپشن دمو (فقط منشن پایین)
-                    caption_demo = f'<blockquote><a href="{channel_link}"><b>🆔 @{clean_target}</b></a></blockquote>'
+                    caption_demo = (
+                        f"<b>name: {track_name}</b>\n"
+                        f"<b>Demo⚠️⏯️</b>\n\n"
+                        f'<blockquote><a href="{channel_link}"><b>🆔 @{clean_target}</b></a></blockquote>\n\n'
+                        f"<b>🛑O.file👇</b>"
+                    )
 
                     caption_full = (
                         f"<b>name: {track_name}</b>\n"
@@ -406,7 +425,7 @@ async def publisher_worker():
 
                 log("Broadcasting package to channel...")
 
-                # ارسال تصویر با اسپویلر در چرخه عکس‌دار
+                # ۱. ارسال تصویر با اسپویلر
                 if INCLUDE_PHOTO_CYCLE and temp_photo:
                     uploaded_photo = await bot_client.upload_file(temp_photo)
                     target_peer = await bot_client.get_input_entity(TARGET_CHANNEL)
@@ -422,7 +441,7 @@ async def publisher_worker():
                     if os.path.exists(temp_photo):
                         os.remove(temp_photo)
 
-                # ارسال بسته‌های موزیک و ویس
+                # ۲. ارسال متوالی ویس دمو و موزیک‌ها
                 for t in prepared_tracks:
                     await bot_client.send_file(
                         TARGET_CHANNEL,
@@ -430,8 +449,7 @@ async def publisher_worker():
                         caption=t["caption_demo"],
                         parse_mode='html',
                         voice_note=True,
-                        silent=True,
-                        attributes=[DocumentAttributeAudio(duration=40, voice=True)]
+                        silent=True
                     )
 
                     await bot_client.send_file(
