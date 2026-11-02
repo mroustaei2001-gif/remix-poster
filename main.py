@@ -276,7 +276,7 @@ async def publisher_worker():
                 update_metadata_and_cover(temp_full, display_title, display_performer, COVER_PATH)
                 
                 sound_obj, start_sec = create_demo_snippet(temp_full, temp_demo, start_sec=40, duration_sec=40)
-_, vibe = analyze_bpm_and_vibe(sound_obj, track_title=track_name)
+                _, vibe = analyze_bpm_and_vibe(sound_obj, track_title=track_name)
 
                 m, s = divmod(start_sec, 60)
                 timestamp_str = f"{m:02d}:{s:02d}"
