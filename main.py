@@ -351,179 +351,164 @@ async def scan_music_cycle():
 
         await asyncio.sleep(60)
 
-def get_seconds_until_next_slot():
-    now = datetime.now(IRAN_TZ)
-    today = now.date()
-    candidate_slots = []
-
-    for h in SCHEDULE_HOURS:
-        slot = datetime(today.year, today.month, today.day, h, 0, 0, tzinfo=IRAN_TZ)
-        if slot > now:
-            candidate_slots.append(slot)
-
-    if not candidate_slots:
-        tomorrow = today + timedelta(days=1)
-        next_slot = datetime(tomorrow.year, tomorrow.month, tomorrow.day, SCHEDULE_HOURS[0], 0, 0, tzinfo=IRAN_TZ)
-    else:
-        next_slot = min(candidate_slots)
-
-    seconds = (next_slot - now).total_seconds()
-    log(f"Next scheduled broadcast: {next_slot.strftime('%Y-%m-%d %H:%M:%S')} (in {seconds/3600:.2f} hours)")
-    return seconds
-
 async def publisher_worker():
     global INCLUDE_PHOTO_CYCLE
+    last_processed_slot = None
+
     while True:
         try:
-            sleep_sec = get_seconds_until_next_slot()
-            await asyncio.sleep(sleep_sec)
+            now = datetime.now(IRAN_TZ)
+            current_hour = now.hour
+            current_minute = now.minute
 
-            log("Target time reached! Validating queues before publishing...")
-            await ensure_connection()
+            # انتشار فقط در دقیقه ۰۰ از ساعات هدف: 2, 10, 14, 18, 22
+            if current_hour in SCHEDULE_HOURS and current_minute == 0:
+                slot_key = f"{now.strftime('%Y-%m-%d')}_{current_hour}"
+                if last_processed_slot != slot_key:
+                    log(f"--- Triggering broadcast for {current_hour:02d}:00 ---")
+                    await ensure_connection()
 
-            retry_count = 0
-            while True:
-                has_req = (len(MUSIC_QUEUE) >= 2) and (not INCLUDE_PHOTO_CYCLE or len(PHOTO_QUEUE) >= 1)
-                if has_req or retry_count >= 10:
-                    break
-                log(f"Waiting for scanner to fill queue... (Photo: {len(PHOTO_QUEUE)}, Music: {len(MUSIC_QUEUE)})")
-                await asyncio.sleep(15)
-                retry_count += 1
+                    retry_wait = 0
+                    while (len(MUSIC_QUEUE) < 2 or (INCLUDE_PHOTO_CYCLE and len(PHOTO_QUEUE) < 1)) and retry_wait < 12:
+                        log(f"Waiting for scan queues... Photos: {len(PHOTO_QUEUE)}, Music: {len(MUSIC_QUEUE)}")
+                        await asyncio.sleep(10)
+                        retry_wait += 1
 
-            if len(MUSIC_QUEUE) < 2:
-                log("Music queue still below threshold, skipping this slot.")
-                continue
+                    if len(MUSIC_QUEUE) >= 2:
+                        clean_target = TARGET_CHANNEL.replace('@', '').replace('https://t.me/', '')
+                        channel_link = f"https://t.me/{clean_target}"
 
-            clean_target = TARGET_CHANNEL.replace('@', '').replace('https://t.me/', '')
-            channel_link = f"https://t.me/{clean_target}"
+                        temp_photo = None
+                        photo_caption = ""
+                        if INCLUDE_PHOTO_CYCLE and len(PHOTO_QUEUE) >= 1:
+                            photo_msg = PHOTO_QUEUE.pop(0)
+                            temp_photo = f"photo_{photo_msg.id}.jpg"
+                            await user_client.download_media(photo_msg, file=temp_photo)
+                            photo_caption = f'<blockquote><a href="{channel_link}"><b>🆔 @{clean_target}</b></a></blockquote>'
 
-            temp_photo = None
-            photo_caption = ""
-            if INCLUDE_PHOTO_CYCLE and len(PHOTO_QUEUE) >= 1:
-                photo_msg = PHOTO_QUEUE.pop(0)
-                temp_photo = f"photo_{photo_msg.id}.jpg"
-                await user_client.download_media(photo_msg, file=temp_photo)
-                photo_caption = f'<blockquote><a href="{channel_link}"><b>🆔 @{clean_target}</b></a></blockquote>'
+                        prepared_tracks = []
+                        for idx in range(2):
+                            msg, is_foreign = MUSIC_QUEUE.pop(0)
 
-            prepared_tracks = []
-            for idx in range(2):
-                msg, is_foreign = MUSIC_QUEUE.pop(0)
+                            raw_title = "New Remix"
+                            raw_performer = ""
+                            duration = 0
+                            for attr in msg.audio.attributes:
+                                if isinstance(attr, DocumentAttributeAudio):
+                                    if attr.title:
+                                        raw_title = attr.title
+                                    if attr.performer:
+                                        raw_performer = attr.performer
+                                    if attr.duration:
+                                        duration = attr.duration
 
-                raw_title = "New Remix"
-                raw_performer = ""
-                duration = 0
-                for attr in msg.audio.attributes:
-                    if isinstance(attr, DocumentAttributeAudio):
-                        if attr.title:
-                            raw_title = attr.title
-                        if attr.performer:
-                            raw_performer = attr.performer
-                        if attr.duration:
-                            duration = attr.duration
+                            track_name = clean_track_name(raw_title)
+                            clean_artist = clean_artist_name(raw_performer)
 
-                track_name = clean_track_name(raw_title)
-                clean_artist = clean_artist_name(raw_performer)
+                            if clean_artist:
+                                display_title = f"{track_name} - @{clean_target}"
+                                display_performer = clean_artist
+                            else:
+                                display_title = track_name
+                                display_performer = f"Telegram: @{clean_target}"
 
-                if clean_artist:
-                    display_title = f"{track_name} - @{clean_target}"
-                    display_performer = clean_artist
-                else:
-                    display_title = track_name
-                    display_performer = f"Telegram: @{clean_target}"
+                            temp_full = f"full_{msg.id}.mp3"
+                            temp_demo = f"demo_{msg.id}.ogg"
 
-                temp_full = f"full_{msg.id}.mp3"
-                temp_demo = f"demo_{msg.id}.ogg"
+                            await user_client.download_media(msg, file=temp_full)
+                            update_metadata_and_cover(temp_full, display_title, display_performer, COVER_PATH)
 
-                await user_client.download_media(msg, file=temp_full)
-                update_metadata_and_cover(temp_full, display_title, display_performer, COVER_PATH)
+                            start_sec = create_demo_voice_ffmpeg(temp_full, temp_demo, start_sec=40, duration_sec=40)
+                            vibe = get_track_vibe(track_title=track_name, is_foreign=is_foreign)
 
-                start_sec = create_demo_voice_ffmpeg(temp_full, temp_demo, start_sec=40, duration_sec=40)
-                vibe = get_track_vibe(track_title=track_name, is_foreign=is_foreign)
+                            proxy_link = await get_latest_proxy()
+                            m, s = divmod(start_sec, 60)
+                            timestamp_str = f"{m:02d}:{s:02d}"
 
-                proxy_link = await get_latest_proxy()
-                m, s = divmod(start_sec, 60)
-                timestamp_str = f"{m:02d}:{s:02d}"
+                            caption_demo = (
+                                f"<b>name: {track_name}</b>\n"
+                                f"<b>Demo⚠️⏯️</b>\n\n"
+                                f'<blockquote><a href="{channel_link}"><b>🆔 @{clean_target}</b></a></blockquote>\n\n'
+                                f"<b>🛑O.file👇</b>"
+                            )
 
-                caption_demo = (
-                    f"<b>name: {track_name}</b>\n"
-                    f"<b>Demo⚠️⏯️</b>\n\n"
-                    f'<blockquote><a href="{channel_link}"><b>🆔 @{clean_target}</b></a></blockquote>\n\n'
-                    f"<b>🛑O.file👇</b>"
-                )
+                            caption_full = (
+                                f"<b>name: {track_name}</b>\n"
+                                f"<b>full music ✅️⏯️</b>\n"
+                                f'<a href="{proxy_link}"><b>proxy</b></a>\n\n'
+                                f"<b>🎧 پارت دمو (لمس کنید) ⇦ {timestamp_str}</b>\n"
+                                f"<b>{vibe}</b>\n\n"
+                                f'<blockquote><a href="{channel_link}"><b>🎷&nbsp;&nbsp;معرفی بهترین ریمیکسها&nbsp;&nbsp;🎼</b></a></blockquote>\n'
+                                f"<blockquote><b>🆔 @{clean_target}</b></blockquote>"
+                            )
 
-                caption_full = (
-                    f"<b>name: {track_name}</b>\n"
-                    f"<b>full music ✅️⏯️</b>\n"
-                    f'<a href="{proxy_link}"><b>proxy</b></a>\n\n'
-                    f"<b>🎧 پارت دمو (لمس کنید) ⇦ {timestamp_str}</b>\n"
-                    f"<b>{vibe}</b>\n\n"
-                    f'<blockquote><a href="{channel_link}"><b>🎷&nbsp;&nbsp;معرفی بهترین ریمیکسها&nbsp;&nbsp;🎼</b></a></blockquote>\n'
-                    f"<blockquote><b>🆔 @{clean_target}</b></blockquote>"
-                )
+                            prepared_tracks.append({
+                                "temp_demo": temp_demo,
+                                "caption_demo": caption_demo,
+                                "temp_full": temp_full,
+                                "caption_full": caption_full,
+                                "duration": duration,
+                                "display_title": display_title,
+                                "display_performer": display_performer
+                            })
 
-                prepared_tracks.append({
-                    "temp_demo": temp_demo,
-                    "caption_demo": caption_demo,
-                    "temp_full": temp_full,
-                    "caption_full": caption_full,
-                    "duration": duration,
-                    "display_title": display_title,
-                    "display_performer": display_performer
-                })
+                        log("Broadcasting package to production channel...")
 
-            log("Broadcasting package to production channel...")
+                        if temp_photo and os.path.exists(temp_photo):
+                            uploaded_photo = await bot_client.upload_file(temp_photo)
+                            target_peer = await bot_client.get_input_entity(TARGET_CHANNEL)
+                            caption_text, entities = await bot_client._parse_message_text(photo_caption, 'html')
 
-            # ارسال عکس اسپویلردار (در نوبت‌های زوج)
-            if temp_photo and os.path.exists(temp_photo):
-                uploaded_photo = await bot_client.upload_file(temp_photo)
-                target_peer = await bot_client.get_input_entity(TARGET_CHANNEL)
-                caption_text, entities = await bot_client._parse_message_text(photo_caption, 'html')
+                            await bot_client(SendMediaRequest(
+                                peer=target_peer,
+                                media=InputMediaUploadedPhoto(file=uploaded_photo, spoiler=True),
+                                message=caption_text,
+                                entities=entities,
+                                silent=True
+                            ))
+                            os.remove(temp_photo)
 
-                await bot_client(SendMediaRequest(
-                    peer=target_peer,
-                    media=InputMediaUploadedPhoto(file=uploaded_photo, spoiler=True),
-                    message=caption_text,
-                    entities=entities,
-                    silent=True
-                ))
-                os.remove(temp_photo)
+                        for t in prepared_tracks:
+                            await bot_client.send_file(
+                                TARGET_CHANNEL,
+                                t["temp_demo"],
+                                caption=t["caption_demo"],
+                                parse_mode='html',
+                                voice_note=True,
+                                silent=True
+                            )
 
-            # ارسال دموهای ویس و موزیک‌های کامل
-            for t in prepared_tracks:
-                await bot_client.send_file(
-                    TARGET_CHANNEL,
-                    t["temp_demo"],
-                    caption=t["caption_demo"],
-                    parse_mode='html',
-                    voice_note=True,
-                    silent=True
-                )
+                            await bot_client.send_file(
+                                TARGET_CHANNEL,
+                                t["temp_full"],
+                                caption=t["caption_full"],
+                                parse_mode='html',
+                                silent=True,
+                                thumb=COVER_PATH if os.path.exists(COVER_PATH) else None,
+                                attributes=[DocumentAttributeAudio(duration=t["duration"], title=t["display_title"], performer=t["display_performer"])]
+                            )
 
-                await bot_client.send_file(
-                    TARGET_CHANNEL,
-                    t["temp_full"],
-                    caption=t["caption_full"],
-                    parse_mode='html',
-                    silent=True,
-                    thumb=COVER_PATH if os.path.exists(COVER_PATH) else None,
-                    attributes=[DocumentAttributeAudio(duration=t["duration"], title=t["display_title"], performer=t["display_performer"])]
-                )
+                        for t in prepared_tracks:
+                            if os.path.exists(t["temp_demo"]):
+                                os.remove(t["temp_demo"])
+                            if os.path.exists(t["temp_full"]):
+                                os.remove(t["temp_full"])
 
-            for t in prepared_tracks:
-                if os.path.exists(t["temp_demo"]):
-                    os.remove(t["temp_demo"])
-                if os.path.exists(t["temp_full"]):
-                    os.remove(t["temp_full"])
-
-            INCLUDE_PHOTO_CYCLE = not INCLUDE_PHOTO_CYCLE
-            log(f"Broadcast completed successfully! Next slot with photo: {INCLUDE_PHOTO_CYCLE}")
-
-            # تاخیر ۳۰ ثانیه‌ای برای عبور کامل از دقیقه شروع اسلات
-            await asyncio.sleep(30)
+                        INCLUDE_PHOTO_CYCLE = not INCLUDE_PHOTO_CYCLE
+                        last_processed_slot = slot_key
+                        log(f"Broadcast successful! Next slot photo status: {INCLUDE_PHOTO_CYCLE}")
+                    else:
+                        log("Queue lacked enough tracks, skipping broadcast slot.")
+            else:
+                # لاگ پینگ داخلی فقط در کنسول ریل‌وی جهت زنده‌ماندن کانتینر (هیچ پیامی به کانال تلگرام نمی‌رود)
+                if current_minute in [0, 30]:
+                    log(f"[Heartbeat] Active. Waiting for next schedule slot. Queues: {len(PHOTO_QUEUE)} photos, {len(MUSIC_QUEUE)} tracks.")
 
         except Exception as e:
             log(f"Publisher Worker Error: {e}")
-            await asyncio.sleep(60)
+
+        # بررسی وضعیت هر ۴۰ ثانیه
+        await asyncio.sleep(40)
 
 async def main():
     log("Connecting user client...")
