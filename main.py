@@ -1,21 +1,25 @@
 import os
 import asyncio
 import re
+import io
+from datetime import datetime, timezone, timedelta
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.types import DocumentAttributeAudio
+from telethon.tl.functions.account import UpdateProfileRequest
 from pydub import AudioSegment
 from mutagen.mp3 import MP3
 from mutagen.id3 import ID3, TIT2, TPE1, COMM, APIC
+from PIL import Image
 
-# --- متغیرهای محیطی در Railway ---
+# --- متغیرهای محیطی و کانفیگ ---
 API_ID = int(os.getenv('API_ID', '2040'))
 API_HASH = os.getenv('API_HASH', 'b18441a1ff607e10a989891a5462e627')
 BOT_TOKEN = os.getenv('BOT_TOKEN', '')
 STRING_SESSION = os.getenv('STRING_SESSION', '')
 
-TARGET_CHANNEL = os.getenv('TARGET_CHANNEL', '@xibopay')
-POST_INTERVAL = int(os.getenv('POST_INTERVAL', '10800'))  # پیش‌فرض ۳ ساعت
+TARGET_CHANNEL = os.getenv('TARGET_CHANNEL', '@remixiyu')
+POST_INTERVAL = int(os.getenv('POST_INTERVAL', '14400'))  # هر ۴ ساعت یک‌بار
 
 SOURCE_CHANNELS = [
     'RapRemixxx',
@@ -29,13 +33,14 @@ SOURCE_CHANNELS = [
 
 COVER_PATH = "cover.png"
 SEEN_FILE = "seen_tracks.txt"
+IRAN_TZ = timezone(timedelta(hours=3, minutes=30))
 
 user_client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
 bot_client = TelegramClient('bot_session', API_ID, API_HASH)
 
 MUSIC_QUEUE = []
-
 SEEN_TRACKS = set()
+
 if os.path.exists(SEEN_FILE):
     try:
         with open(SEEN_FILE, "r", encoding="utf-8") as f:
@@ -69,7 +74,6 @@ def clean_artist_name(performer):
 def analyze_bpm_and_vibe(sound_segment, track_title=""):
     title_lower = (track_title or "").lower()
 
-    # ۱. تطبیق دقیق کلمات کلیدی عنوان
     dark_keywords = [
         'dep', 'dark', 'sad', 'ghamgin', 'gham', 'tanha', 'del', 'ghose', 'tanhae', 
         'بغض', 'غم', 'دارک', 'گریه', 'دپ', 'تنهایی', 'خاطره', 'اشک', 'دلشکسته', 'دلگیر', 'مرگ', 'شب'
@@ -96,29 +100,24 @@ def analyze_bpm_and_vibe(sound_segment, track_title=""):
     if any(k in title_lower for k in gang_keywords):
         return 140, "🚀 فاز سنگین / بیس‌دار"
 
-    # ۲. تحلیل پردازش سیگنال بیس واقعی
     try:
-        # برش ۳۰ ثانیه از بخش اصلی آهنگ
         sample_audio = sound_segment[40000:70000]
         if len(sample_audio) < 10000:
             sample_audio = sound_segment[:25000]
 
-        # فیلتر کردن صدا برای باقی ماندن فقط فرکانس‌های کیک و بیس (Low-pass 160Hz)
         bass_audio = sample_audio.set_channels(1).low_pass_filter(160)
         samples = bass_audio.get_array_of_samples()
         
         if not samples:
             return 115, "🏎️ فاز دور دور"
 
-        # محاسبه انرژی میانگین بیس (RMS)
         total_energy = sum(s * s for s in samples[::50])
         rms = (total_energy / max(len(samples[::50]), 1)) ** 0.5
 
-        # تنظیم آستانه متحرک ضربان کیک
         peak_threshold = max(abs(s) for s in samples[::50]) * 0.72
         kick_count = 0
         cooldown = 0
-        min_cooldown = int(bass_audio.frame_rate * 0.35)  # حداقل 350 میلی‌ثانیه بین دو ضربه بیس واقعی
+        min_cooldown = int(bass_audio.frame_rate * 0.35)
 
         for s in samples:
             if cooldown > 0:
@@ -131,8 +130,6 @@ def analyze_bpm_and_vibe(sound_segment, track_title=""):
         duration_sec = len(bass_audio) / 1000.0
         calculated_tempo = int((kick_count / duration_sec) * 60)
 
-        # محاسبه ترکیبی ریتم و ضرباهنگ:
-        # اگر بیس مداوم و تمپوی واقعی بالا باشد -> فاز سنگین
         if calculated_tempo >= 128 and rms > 6500:
             vibe = "🚀 فاز سنگین / بیس‌دار"
         elif 118 <= calculated_tempo < 128:
@@ -152,7 +149,6 @@ def analyze_bpm_and_vibe(sound_segment, track_title=""):
         print(f"[Vibe Detection Fallback] {e}")
         return 112, "🏎️ فاز دور دور"
 
-
 def update_metadata_and_cover(file_path, title, artist, cover_file):
     try:
         try:
@@ -164,7 +160,7 @@ def update_metadata_and_cover(file_path, title, artist, cover_file):
         if audio.tags is None:
             audio.add_tags()
 
-        # حذف تمامی تگ‌های کاور قبلی که از قبل روی فایل بوده است
+        # پاکسازی کاورهای قبلی از حافظه پلیر
         audio.tags.delall('APIC')
 
         clean_channel = TARGET_CHANNEL.replace('@', '').replace('https://t.me/', '')
@@ -173,10 +169,6 @@ def update_metadata_and_cover(file_path, title, artist, cover_file):
         audio.tags.add(COMM(encoding=3, lang='eng', desc='', text=f'https://t.me/{clean_channel}'))
 
         if os.path.exists(cover_file):
-            # تبدیل کاور به فرمت استاندارد JPEG یا PNG برای خوانده‌شدن در پلیر
-            from PIL import Image
-            import io
-            
             with Image.open(cover_file) as img:
                 img = img.convert('RGB')
                 img_byte_arr = io.BytesIO()
@@ -186,7 +178,7 @@ def update_metadata_and_cover(file_path, title, artist, cover_file):
             audio.tags.add(APIC(
                 encoding=3,
                 mime='image/jpeg',
-                type=3,  # cover front
+                type=3,
                 desc='Cover',
                 data=img_data
             ))
@@ -194,7 +186,6 @@ def update_metadata_and_cover(file_path, title, artist, cover_file):
         audio.save(v2_version=3)
     except Exception as e:
         print(f"[Tag Error] {e}")
-
 
 def create_demo_snippet(input_path, output_path, start_sec=40, duration_sec=40):
     sound = AudioSegment.from_file(input_path)
@@ -210,6 +201,16 @@ def create_demo_snippet(input_path, output_path, start_sec=40, duration_sec=40):
     demo = demo.fade_in(2000).fade_out(2500)
     demo.export(output_path, format="mp3", bitrate="192k")
     return sound, start_sec
+
+async def wait_if_night_time():
+    now = datetime.now(IRAN_TZ)
+    # بازه ۲ شب تا قبل از ۱۰ صبح (ساعت‌های ۲ تا ۹)
+    if 2 <= now.hour < 10:
+        target_time = now.replace(hour=10, minute=0, second=0, microsecond=0)
+        seconds_to_wait = (target_time - now).total_seconds()
+        if seconds_to_wait > 0:
+            print(f"[Scheduler] بازه استراحت شبانه ({now.strftime('%H:%M')}). صبر تا ساعت ۱۰:۰۰ صبح به مدت {int(seconds_to_wait)} ثانیه...")
+            await asyncio.sleep(seconds_to_wait)
 
 async def scan_sources_cycle():
     while True:
@@ -260,6 +261,9 @@ async def scan_sources_cycle():
 async def publisher_worker():
     while True:
         try:
+            # بررسی بازه استراحت ۲ شب تا ۱۰ صبح
+            await wait_if_night_time()
+
             if MUSIC_QUEUE:
                 msg = MUSIC_QUEUE.pop(0)
                 print(f"[Publisher] Processing track ID {msg.id}...")
@@ -293,7 +297,7 @@ async def publisher_worker():
 
                 await user_client.download_media(msg, file=temp_full)
                 update_metadata_and_cover(temp_full, display_title, display_performer, COVER_PATH)
-                
+
                 sound_obj, start_sec = create_demo_snippet(temp_full, temp_demo, start_sec=40, duration_sec=40)
                 _, vibe = analyze_bpm_and_vibe(sound_obj, track_title=track_name)
 
@@ -316,6 +320,7 @@ async def publisher_worker():
                     f"<blockquote><b>🆔 @{clean_target}</b></blockquote>"
                 )
 
+                # ارسال دمو بدون کاور
                 await bot_client.send_file(
                     TARGET_CHANNEL,
                     temp_demo,
@@ -326,6 +331,7 @@ async def publisher_worker():
 
                 await asyncio.sleep(3)
 
+                # ارسال فایل کامل با کاور
                 await bot_client.send_file(
                     TARGET_CHANNEL,
                     temp_full,
@@ -335,8 +341,10 @@ async def publisher_worker():
                     attributes=[DocumentAttributeAudio(duration=duration, title=display_title, performer=display_performer)]
                 )
 
-                if os.path.exists(temp_full): os.remove(temp_full)
-                if os.path.exists(temp_demo): os.remove(temp_demo)
+                if os.path.exists(temp_full):
+                    os.remove(temp_full)
+                if os.path.exists(temp_demo):
+                    os.remove(temp_demo)
 
                 print(f"[Publisher] Posted successfully: {track_name}")
 
@@ -346,22 +354,26 @@ async def publisher_worker():
         await asyncio.sleep(POST_INTERVAL)
 
 async def main():
-    # اتصال قطعی کلاینت کاربر با سشن استرینگ
     print("[Init] Connecting user client...")
     await user_client.connect()
-    
+
     if not await user_client.is_user_authorized():
         print("[Auth Error] STRING_SESSION نامعتبر یا منقضی شده است!")
         return
 
     print("User Client is online and connected!")
 
-    # اتصال ربات رسمی
+    # تنظیم خودکار بیوگرافی به آیدی کانال اصلی
+    try:
+        await user_client(UpdateProfileRequest(about="ID/@remixiyu"))
+        print("[Profile] Bio set to ID/@remixiyu successfully.")
+    except Exception as e:
+        print(f"[Profile Bio Error] {e}")
+
     print("[Init] Starting bot client...")
     await bot_client.start(bot_token=BOT_TOKEN)
     print("Channel Bot is online and running...")
 
-    # شروع تسک‌ها پس از اطمینان ۱۰۰٪ از اتصال هر دو کلاینت
     asyncio.create_task(scan_sources_cycle())
     asyncio.create_task(publisher_worker())
 
