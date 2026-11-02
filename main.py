@@ -3,6 +3,8 @@ import asyncio
 import re
 import io
 import random
+from telethon.tl.types import InputMediaUploadedPhoto
+from telethon.tl.functions.messages import SendMediaRequest
 from datetime import datetime, timezone, timedelta
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -402,7 +404,7 @@ async def publisher_worker():
                     temp_full = f"full_{msg.id}.mp3"
                     temp_demo = f"demo_{msg.id}.mp3"
 
-                    # دانلود و اعمال متادیتا
+                    # دانلود و اعمال تگ و کاور
                     await user_client.download_media(msg, file=temp_full)
                     update_metadata_and_cover(temp_full, display_title, display_performer, COVER_PATH)
 
@@ -440,24 +442,24 @@ async def publisher_worker():
                         "display_performer": display_performer
                     })
 
-                # --- مرحله ۳: ارسال همزمان بدون تاخیر ---
+                # --- مرحله ۳: ارسال همزمان و فوری پکیج ---
                 print("[Publisher] All files ready! Sending batch instantly...")
 
-                # ۱. آپلود و ارسال تصویر با اسپویلر تضمینی
-                uploaded_photo = await bot_client.upload_file(temp_photo)
-                await bot_client.send_file(
-                    TARGET_CHANNEL,
-                    uploaded_photo,
-                    caption=photo_caption,
-                    parse_mode='html',
-                    has_spoiler=True,
-                    force_document=False,
-                    silent=True
-                )
+                # ۱. ارسال عکس با متد مستقیم و قطعی اسپویلر تلگرام
+                uploaded_file = await bot_client.upload_file(temp_photo)
+                target_entity = await bot_client.get_input_entity(TARGET_CHANNEL)
 
-                # ۲. ارسال بلافاصله دموها و موزیک‌ها به ترتیب
+                await bot_client(SendMediaRequest(
+                    peer=target_entity,
+                    media=InputMediaUploadedPhoto(file=uploaded_file, spoiler=True),
+                    message=photo_caption,
+                    parse_mode='html',
+                    silent=True
+                ))
+
+                # ۲. ارسال بلافاصله دموها و موزیک‌ها پشت سر هم
                 for t in prepared_tracks:
-                    # ارسال دمو
+                    # ارسال فایل دمو
                     await bot_client.send_file(
                         TARGET_CHANNEL,
                         t["temp_demo"],
@@ -466,7 +468,8 @@ async def publisher_worker():
                         silent=True,
                         attributes=[DocumentAttributeAudio(duration=40, title=f"{t['display_title']} (Demo)", performer=t["display_performer"])]
                     )
-                    # ارسال موزیک کامل با کاور
+
+                    # ارسال فایل کامل با کاور
                     await bot_client.send_file(
                         TARGET_CHANNEL,
                         t["temp_full"],
@@ -477,7 +480,7 @@ async def publisher_worker():
                         attributes=[DocumentAttributeAudio(duration=t["duration"], title=t["display_title"], performer=t["display_performer"])]
                     )
 
-                # پاکسازی فایل‌های موقت هارد پس از اتمام ارسال
+                # پاکسازی فایل‌های پردازش‌شده از هارد موقت سرور
                 if os.path.exists(temp_photo):
                     os.remove(temp_photo)
                 for t in prepared_tracks:
@@ -486,12 +489,13 @@ async def publisher_worker():
                     if os.path.exists(t["temp_full"]):
                         os.remove(t["temp_full"])
 
-                print("[Publisher] Successfully posted batch: 1 Spoiler Photo + 2 Music pairs!")
+                print("[Publisher] Successfully posted batch: 1 Spoiler Photo + 2 Music sets!")
 
         except Exception as e:
             print(f"[Publisher Error] {e}")
 
         await asyncio.sleep(POST_INTERVAL)
+
 
 
 async def main():
