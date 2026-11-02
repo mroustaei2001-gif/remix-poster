@@ -97,11 +97,17 @@ def analyze_bpm_and_vibe(sound_segment):
 
 def update_metadata_and_cover(file_path, title, artist, cover_file):
     try:
-        audio = MP3(file_path, ID3=ID3)
         try:
-            audio.add_tags()
+            audio = MP3(file_path, ID3=ID3)
         except Exception:
-            pass
+            audio = MP3(file_path)
+            audio.add_tags()
+
+        if audio.tags is None:
+            audio.add_tags()
+
+        # حذف تمامی تگ‌های کاور قبلی که از قبل روی فایل بوده است
+        audio.tags.delall('APIC')
 
         clean_channel = TARGET_CHANNEL.replace('@', '').replace('https://t.me/', '')
         audio.tags.add(TIT2(encoding=3, text=title))
@@ -109,18 +115,28 @@ def update_metadata_and_cover(file_path, title, artist, cover_file):
         audio.tags.add(COMM(encoding=3, lang='eng', desc='', text=f'https://t.me/{clean_channel}'))
 
         if os.path.exists(cover_file):
-            with open(cover_file, 'rb') as img:
-                audio.tags.add(APIC(
-                    encoding=3,
-                    mime='image/png',
-                    type=3,
-                    desc='Cover',
-                    data=img.read()
-                ))
+            # تبدیل کاور به فرمت استاندارد JPEG یا PNG برای خوانده‌شدن در پلیر
+            from PIL import Image
+            import io
+            
+            with Image.open(cover_file) as img:
+                img = img.convert('RGB')
+                img_byte_arr = io.BytesIO()
+                img.save(img_byte_arr, format='JPEG', quality=95)
+                img_data = img_byte_arr.getvalue()
+
+            audio.tags.add(APIC(
+                encoding=3,
+                mime='image/jpeg',
+                type=3,  # cover front
+                desc='Cover',
+                data=img_data
+            ))
 
         audio.save(v2_version=3)
     except Exception as e:
         print(f"[Tag Error] {e}")
+
 
 def create_demo_snippet(input_path, output_path, start_sec=40, duration_sec=40):
     sound = AudioSegment.from_file(input_path)
