@@ -2,23 +2,23 @@ import os
 import asyncio
 import re
 import io
+from datetime import datetime, timezone, timedelta
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.types import DocumentAttributeAudio
-from telethon.tl.functions.account import UpdateProfileRequest
 from pydub import AudioSegment
 from mutagen.mp3 import MP3
 from mutagen.id3 import ID3, TIT2, TPE1, COMM, APIC
 from PIL import Image
 
-# --- تنظیمات متغیرهای محیطی ---
+# --- تنظیمات متغیرهای محیطی و کانفیگ ---
 API_ID = int(os.getenv('API_ID', '2040'))
 API_HASH = os.getenv('API_HASH', 'b18441a1ff607e10a989891a5462e627')
 BOT_TOKEN = os.getenv('BOT_TOKEN', '')
 STRING_SESSION = os.getenv('STRING_SESSION', '')
 
-TARGET_CHANNEL = os.getenv('TARGET_CHANNEL', '@xibopay')
-POST_INTERVAL = int(os.getenv('POST_INTERVAL', '15'))  # زمان تست سریع
+TARGET_CHANNEL = os.getenv('TARGET_CHANNEL', '@remixiyu')
+POST_INTERVAL = int(os.getenv('POST_INTERVAL', '14400'))  # هر ۴ ساعت یک‌بار
 PROXY_CHANNEL = 'iRoProxy'
 
 SOURCE_CHANNELS = [
@@ -33,6 +33,7 @@ SOURCE_CHANNELS = [
 
 COVER_PATH = "cover.png"
 SEEN_FILE = "seen_tracks.txt"
+IRAN_TZ = timezone(timedelta(hours=3, minutes=30))
 
 user_client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
 bot_client = TelegramClient('bot_session', API_ID, API_HASH)
@@ -71,10 +72,9 @@ def clean_artist_name(performer):
     return performer.strip()
 
 async def get_latest_proxy():
-    """استخراج دقیق و کامل آخرین لینک پروکسی فعال از ۵ پیام اخیر"""
+    """استخراج جدیدترین پروکسی از ۵ پست آخر و تبدیل به پروتکل مستقیم تلگرام"""
     try:
         async for msg in user_client.iter_messages(PROXY_CHANNEL, limit=5):
-            # ۱. اولویت اول: دکمه‌های شیشه‌ای (که معمولاً سالم‌ترین لینک اتصال را دارند)
             if msg.buttons:
                 for row in msg.buttons:
                     for btn in row:
@@ -84,7 +84,6 @@ async def get_latest_proxy():
                                 link = link.replace('https://t.me/proxy?', 'tg://proxy?')
                             return link
 
-            # ۲. اولویت دوم: موجودیت‌های متن (Entities) تلگرام برای جلوگیری از شکستن URL
             if msg.entities:
                 for ent, text in msg.get_entities_text():
                     if hasattr(ent, 'url') and ent.url and ('proxy?' in ent.url):
@@ -93,7 +92,6 @@ async def get_latest_proxy():
                             link = link.replace('https://t.me/proxy?', 'tg://proxy?')
                         return link
 
-            # ۳. اولویت سوم: ریجکس دقیق از متن پیام
             if msg.text:
                 found = re.findall(r'(?:https?://t\.me/proxy\?|tg://proxy\?)[^\s<>"\'`]+', msg.text)
                 if found:
@@ -106,14 +104,25 @@ async def get_latest_proxy():
 
     return "https://t.me/iRoProxy"
 
-
 def analyze_bpm_and_vibe(sound_segment, track_title=""):
     title_lower = (track_title or "").lower()
 
-    dark_keywords = ['dep', 'dark', 'sad', 'ghamgin', 'gham', 'tanha', 'del', 'ghose', 'tanhae', 'بغض', 'غم', 'دارک', 'گریه', 'دپ', 'تنهایی', 'خاطره', 'اشک', 'دلشکسته', 'دلگیر', 'مرگ', 'شب']
-    romantic_keywords = ['love', 'romantic', 'delbar', 'eshgh', 'yar', 'baroon', 'عشق', 'عاشقانه', 'دلبر', 'بارون', 'آروم', 'چشمات', 'آرامش', 'یار', 'جانم', 'من و تو']
-    party_keywords = ['party', 'dance', 'shad', 'raghs', 'bomb', 'gheri', 'wedding', 'قر', 'شاد', 'پارتی', 'عروسی', 'انرژی', 'ترکوندن', 'بندری', 'هللیوس']
-    gang_keywords = ['bass boost', 'heavy bass', 'drill', 'gang', 'shooti', 'بیس سنگین', 'دریل', 'شوتی', 'بیس دار', 'گنگستر', 'سیستمی']
+    dark_keywords = [
+        'dep', 'dark', 'sad', 'ghamgin', 'gham', 'tanha', 'del', 'ghose', 'tanhae', 
+        'بغض', 'غم', 'دارک', 'گریه', 'دپ', 'تنهایی', 'خاطره', 'اشک', 'دلشکسته', 'دلگیر', 'مرگ', 'شب'
+    ]
+    romantic_keywords = [
+        'love', 'romantic', 'delbar', 'eshgh', 'yar', 'baroon',
+        'عشق', 'عاشقانه', 'دلبر', 'بارون', 'آروم', 'چشمات', 'آرامش', 'یار', 'جانم', 'من و تو'
+    ]
+    party_keywords = [
+        'party', 'dance', 'shad', 'raghs', 'bomb', 'gheri', 'wedding',
+        'قر', 'شاد', 'پارتی', 'عروسی', 'انرژی', 'ترکوندن', 'بندری', 'هللیوس'
+    ]
+    gang_keywords = [
+        'bass boost', 'heavy bass', 'drill', 'gang', 'shooti',
+        'بیس سنگین', 'دریل', 'شوتی', 'بیس دار', 'گنگستر', 'سیستمی'
+    ]
 
     if any(k in title_lower for k in dark_keywords):
         return 85, "🥀 فاز غمگین / دارک"
@@ -184,6 +193,7 @@ def update_metadata_and_cover(file_path, title, artist, cover_file):
         if audio.tags is None:
             audio.add_tags()
 
+        # حذف کامل کاورهای چسبیده قبلی از پلیر تلگرام
         audio.tags.delall('APIC')
 
         clean_channel = TARGET_CHANNEL.replace('@', '').replace('https://t.me/', '')
@@ -224,6 +234,16 @@ def create_demo_snippet(input_path, output_path, start_sec=40, duration_sec=40):
     demo = demo.fade_in(2000).fade_out(2500)
     demo.export(output_path, format="mp3", bitrate="192k")
     return sound, start_sec
+
+async def wait_if_night_time():
+    """اگر ساعت بین ۲ شب تا ۱۰ صبح تهران باشد، صبر می‌کند تا ساعت ۱۰ صبح شود"""
+    now = datetime.now(IRAN_TZ)
+    if 2 <= now.hour < 10:
+        target_time = now.replace(hour=10, minute=0, second=0, microsecond=0)
+        seconds_to_wait = (target_time - now).total_seconds()
+        if seconds_to_wait > 0:
+            print(f"[Scheduler] بازه استراحت شبانه ({now.strftime('%H:%M')}). صبر تا ساعت ۱۰:۰۰ صبح به مدت {int(seconds_to_wait)} ثانیه...")
+            await asyncio.sleep(seconds_to_wait)
 
 async def scan_sources_cycle():
     while True:
@@ -269,11 +289,14 @@ async def scan_sources_cycle():
         except Exception as e:
             print(f"[Scanner Main Error] {e}")
 
-        await asyncio.sleep(60)
+        await asyncio.sleep(1200)
 
 async def publisher_worker():
     while True:
         try:
+            # خاموشی هوشمند شبانه (۲ بامداد تا ۱۰ صبح)
+            await wait_if_night_time()
+
             if MUSIC_QUEUE:
                 msg = MUSIC_QUEUE.pop(0)
                 print(f"[Publisher] Processing track ID {msg.id}...")
@@ -311,7 +334,6 @@ async def publisher_worker():
                 sound_obj, start_sec = create_demo_snippet(temp_full, temp_demo, start_sec=40, duration_sec=40)
                 _, vibe = analyze_bpm_and_vibe(sound_obj, track_title=track_name)
 
-                # دریافت جدیدترین پروکسی فعال از ۵ پست اخیر
                 proxy_link = await get_latest_proxy()
 
                 m, s = divmod(start_sec, 60)
@@ -324,17 +346,17 @@ async def publisher_worker():
                     f"<b>🛑O.file👇</b>"
                 )
 
-                # کلمه proxy زیر full music به صورت بولد و لینک‌دار بدون کیوت
                 caption_full = (
                     f"<b>name: {track_name}</b>\n"
                     f"<b>full music ✅️⏯️</b>\n"
-                    f"<a href=\"{proxy_link}\"><b>proxy</b></a>\n\n"
+                    f'<a href="{proxy_link}"><b>proxy</b></a>\n\n'
                     f"<b>🎧 پارت دمو (لمس کنید) ⇦ {timestamp_str}</b>\n"
                     f"<b>{vibe}</b>\n\n"
-                    f"<blockquote><a href=\"{channel_link}\"><b>🎷&nbsp;&nbsp;معرفی بهترین ریمیکسها&nbsp;&nbsp;🎼</b></a></blockquote>\n"
+                    f'<blockquote><a href="{channel_link}"><b>🎷&nbsp;&nbsp;معرفی بهترین ریمیکسها&nbsp;&nbsp;🎼</b></a></blockquote>\n'
                     f"<blockquote><b>🆔 @{clean_target}</b></blockquote>"
                 )
 
+                # ۱. ارسال دمو بدون کاور
                 await bot_client.send_file(
                     TARGET_CHANNEL,
                     temp_demo,
@@ -345,6 +367,7 @@ async def publisher_worker():
 
                 await asyncio.sleep(3)
 
+                # ۲. ارسال موزیک اصلی با کاور
                 await bot_client.send_file(
                     TARGET_CHANNEL,
                     temp_full,
@@ -375,12 +398,6 @@ async def main():
         return
 
     print("User Client is online and connected!")
-
-    try:
-        await user_client(UpdateProfileRequest(about="ID/@xibopay"))
-        print("[Profile] Bio set to ID/@xibopay successfully.")
-    except Exception as e:
-        print(f"[Profile Bio Error] {e}")
 
     print("[Init] Starting bot client...")
     await bot_client.start(bot_token=BOT_TOKEN)
