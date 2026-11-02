@@ -356,36 +356,22 @@ async def scan_music_cycle():
 async def publisher_worker():
     while True:
         try:
-            # فعال‌سازی خاموشی شبانه در حالت نهایی
-            # await wait_if_night_time()
-
-            # بررسی موجود بودن حداقل ۱ تصویر و ۲ عدد موزیک
+            # بررسی موجود بودن حداقل ۱ عکس و ۲ موزیک در صف
             if len(PHOTO_QUEUE) >= 1 and len(MUSIC_QUEUE) >= 2:
-                print("[Publisher] Preparing batch post (1 Photo + 2 Tracks)...")
+                print("[Publisher] Preparing batch... Downloading and processing files first.")
 
                 clean_target = TARGET_CHANNEL.replace('@', '').replace('https://t.me/', '')
                 channel_link = f"https://t.me/{clean_target}"
 
-                # ۱. ارسال تصویر مستقل با کادر نقل‌قول صورتی
+                # --- مرحله ۱: آماده‌سازی و دانلود عکس ---
                 photo_msg = PHOTO_QUEUE.pop(0)
                 temp_photo = f"photo_{photo_msg.id}.jpg"
                 await user_client.download_media(photo_msg, file=temp_photo)
-
                 photo_caption = f'<blockquote><a href="{channel_link}"><b>🆔 @{clean_target}</b></a></blockquote>'
-                await bot_client.send_file(
-                    TARGET_CHANNEL,
-                    temp_photo,
-                    caption=photo_caption,
-                    parse_mode='html',
-                    silent=True  # ارسال بدون صدا برای جلوگیری از آزار نوتیفیکیشن
-                )
-                if os.path.exists(temp_photo):
-                    os.remove(temp_photo)
 
-                await asyncio.sleep(2)
-
-                # ۲. پردازش و ارسال ۲ ترک به صورت پشت سر هم (دمو ⬅️ اصلی)
-                for i in range(2):
+                # --- مرحله ۲: دانلود، ساخت دمو و آماده‌سازی هر دو موزیک ---
+                prepared_tracks = []
+                for _ in range(2):
                     msg, is_foreign = MUSIC_QUEUE.pop(0)
 
                     raw_title = "New Remix"
@@ -413,6 +399,7 @@ async def publisher_worker():
                     temp_full = f"full_{msg.id}.mp3"
                     temp_demo = f"demo_{msg.id}.mp3"
 
+                    # دانلود و ساخت
                     await user_client.download_media(msg, file=temp_full)
                     update_metadata_and_cover(temp_full, display_title, display_performer, COVER_PATH)
 
@@ -420,7 +407,6 @@ async def publisher_worker():
                     _, vibe = analyze_bpm_and_vibe(sound_obj, track_title=track_name, is_foreign=is_foreign)
 
                     proxy_link = await get_latest_proxy()
-
                     m, s = divmod(start_sec, 60)
                     timestamp_str = f"{m:02d}:{s:02d}"
 
@@ -441,37 +427,61 @@ async def publisher_worker():
                         f"<blockquote><b>🆔 @{clean_target}</b></blockquote>"
                     )
 
-                    # ارسال دمو بدون صدا
+                    prepared_tracks.append({
+                        "temp_demo": temp_demo,
+                        "caption_demo": caption_demo,
+                        "temp_full": temp_full,
+                        "caption_full": caption_full,
+                        "duration": duration,
+                        "display_title": display_title,
+                        "display_performer": display_performer
+                    })
+
+                # --- مرحله ۳: شلیک همزمان و درجا (ارسال پشت‌سر‌هم بدون تاخیر دانلود) ---
+                print("[Publisher] All files ready! Sending batch instantly...")
+
+                # ۱. ارسال تصویر با حالت اسپویلر
+                await bot_client.send_file(
+                    TARGET_CHANNEL,
+                    temp_photo,
+                    caption=photo_caption,
+                    parse_mode='html',
+                    has_spoiler=True,  # اسپویلر دار بودن تصویر
+                    silent=True
+                )
+
+                # ۲. ارسال دموها و موزیک‌ها بلافاصله پشت سر هم
+                for t in prepared_tracks:
+                    # ارسال دمو
                     await bot_client.send_file(
                         TARGET_CHANNEL,
-                        temp_demo,
-                        caption=caption_demo,
+                        t["temp_demo"],
+                        caption=t["caption_demo"],
                         parse_mode='html',
                         silent=True,
-                        attributes=[DocumentAttributeAudio(duration=40, title=f"{track_name} (Demo)", performer=display_performer)]
+                        attributes=[DocumentAttributeAudio(duration=40, title=f"{t['display_title']} (Demo)", performer=t["display_performer"])]
                     )
-
-                    await asyncio.sleep(2)
-
-                    # ارسال موزیک اصلی بدون صدا
+                    # ارسال فایل اصلی
                     await bot_client.send_file(
                         TARGET_CHANNEL,
-                        temp_full,
-                        caption=caption_full,
+                        t["temp_full"],
+                        caption=t["caption_full"],
                         parse_mode='html',
                         silent=True,
                         thumb=COVER_PATH if os.path.exists(COVER_PATH) else None,
-                        attributes=[DocumentAttributeAudio(duration=duration, title=display_title, performer=display_performer)]
+                        attributes=[DocumentAttributeAudio(duration=t["duration"], title=t["display_title"], performer=t["display_performer"])]
                     )
 
-                    if os.path.exists(temp_full):
-                        os.remove(temp_full)
-                    if os.path.exists(temp_demo):
-                        os.remove(temp_demo)
+                # پاکسازی فایل‌های موقت پس از اتمام ارسال
+                if os.path.exists(temp_photo):
+                    os.remove(temp_photo)
+                for t in prepared_tracks:
+                    if os.path.exists(t["temp_demo"]):
+                        os.remove(t["temp_demo"])
+                    if os.path.exists(t["temp_full"]):
+                        os.remove(t["temp_full"])
 
-                    await asyncio.sleep(2)
-
-                print("[Publisher] Successfully sent batch: 1 Photo + 2 Music sets.")
+                print("[Publisher] Successfully posted batch in one go!")
 
         except Exception as e:
             print(f"[Publisher Error] {e}")
