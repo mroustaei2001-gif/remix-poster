@@ -5,6 +5,8 @@ import re
 import io
 import random
 import subprocess
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
 from datetime import datetime, timezone, timedelta
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -22,11 +24,29 @@ def log(msg):
 
 log("Starting remix-poster production script...")
 
+# وب‌سرور داخلی برای فعال نگه داشتن دائمی کانتینر در ریل‌وی
+class DummyServer(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running successfully!")
+
+    def log_message(self, format, *args):
+        pass  # جلوگیری از چاپ لاگ‌های اضافی پورت
+
+def run_keep_alive():
+    port = int(os.getenv("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), DummyServer)
+    server.serve_forever()
+
+threading.Thread(target=run_keep_alive, daemon=True).start()
+
 API_ID = int(os.getenv('API_ID', '2040'))
 API_HASH = os.getenv('API_HASH', 'b18441a1ff607e10a989891a5462e627')
 BOT_TOKEN = os.getenv('BOT_TOKEN', '')
 STRING_SESSION = os.getenv('STRING_SESSION', '')
 
+# کانال اصلی مقصد
 TARGET_CHANNEL = os.getenv('TARGET_CHANNEL', '@remixiyu')
 PROXY_CHANNEL = 'iRoProxy'
 
