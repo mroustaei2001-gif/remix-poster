@@ -30,15 +30,11 @@ SOURCE_CHANNELS = [
 COVER_PATH = "cover.png"
 SEEN_FILE = "seen_tracks.txt"
 
-# کلاینت اکانت کاربری برای اسکن و دانلود از کانال‌های مبدا
 user_client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
-
-# کلاینت ربات رسمی برای انتشار پست‌ها در کانال مقصد
 bot_client = TelegramClient('bot_session', API_ID, API_HASH)
 
 MUSIC_QUEUE = []
 
-# بارگذاری تاریخچه آهنگ‌ها برای جلوگیری از ارسال تکراری پس از ری‌دیپلوی
 SEEN_TRACKS = set()
 if os.path.exists(SEEN_FILE):
     try:
@@ -48,7 +44,6 @@ if os.path.exists(SEEN_FILE):
         print(f"[Storage Read Error] {e}")
 
 def save_seen_track(track_key: str):
-    """ذخیره شناسه آهنگ جهت ثبت دائم تاریخچه"""
     SEEN_TRACKS.add(track_key)
     try:
         with open(SEEN_FILE, "a", encoding="utf-8") as f:
@@ -72,7 +67,6 @@ def clean_artist_name(performer):
     return performer.strip()
 
 def analyze_bpm_and_vibe(sound_segment):
-    """تحلیل هوشمند و غیرمتضاد وایب موزیک بر اساس ریتم و انرژی بیس"""
     try:
         raw_samples = sound_segment[30000:60000].get_array_of_samples()
         if not raw_samples:
@@ -84,7 +78,6 @@ def analyze_bpm_and_vibe(sound_segment):
 
         calc_bpm = 90 + int((avg_energy % 55))
 
-        # دسته‌بندی تفکیک‌شده وایب‌ها بدون هیچ‌گونه تضاد
         if calc_bpm >= 135:
             vibe = "🚀 فاز سنگین / بیس‌دار"
         elif 125 <= calc_bpm < 135:
@@ -135,6 +128,7 @@ def create_demo_snippet(input_path, output_path, start_sec=40, duration_sec=40):
     end_ms = (start_sec + duration_sec) * 1000
 
     if len(sound) <= end_ms:
+        start_sec = 0
         start_ms = 0
         end_ms = min(len(sound), duration_sec * 1000)
 
@@ -232,7 +226,6 @@ async def publisher_worker():
                 m, s = divmod(start_sec, 60)
                 timestamp_str = f"{m:02d}:{s:02d}"
 
-                # کپشن نسخه دمو (بدون لوگو، با نقل‌قول صورتی آیدی و تگ O.file)
                 caption_demo = (
                     f"<b>name: {track_name}</b>\n"
                     f"<b>Demo⚠️⏯️</b>\n\n"
@@ -240,7 +233,6 @@ async def publisher_worker():
                     f"<b>🛑O.file👇</b>"
                 )
 
-                # کپشن نسخه اصلی همراه با تایم‌لاین لمسی و مود بدون کلمه BPM
                 caption_full = (
                     f"<b>name: {track_name}</b>\n"
                     f"<b>full music ✅️⏯️</b>\n\n"
@@ -250,7 +242,6 @@ async def publisher_worker():
                     f"<blockquote><b>🆔 @{clean_target}</b></blockquote>"
                 )
 
-                # ارسال نسخه دمو (بدون لوگو/کاور)
                 await bot_client.send_file(
                     TARGET_CHANNEL,
                     temp_demo,
@@ -261,7 +252,6 @@ async def publisher_worker():
 
                 await asyncio.sleep(3)
 
-                # ارسال نسخه اصلی (همراه با کاور و تایم‌لاین قابل کلیک)
                 await bot_client.send_file(
                     TARGET_CHANNEL,
                     temp_full,
