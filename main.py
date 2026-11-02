@@ -2,6 +2,7 @@ import os
 import asyncio
 import re
 import io
+import random
 from datetime import datetime, timezone, timedelta
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -20,6 +21,7 @@ STRING_SESSION = os.getenv('STRING_SESSION', '')
 
 TARGET_CHANNEL = os.getenv('TARGET_CHANNEL', '@remixiyu')
 POST_INTERVAL = int(os.getenv('POST_INTERVAL', '14400'))  # هر ۴ ساعت یک‌بار
+PROXY_CHANNEL = 'iRoProxy'
 
 SOURCE_CHANNELS = [
     'RapRemixxx',
@@ -70,6 +72,33 @@ def clean_artist_name(performer):
     performer = re.sub(r'@[A-Za-z0-9_]+', '', performer)
     performer = re.sub(r'https?://\S+', '', performer)
     return performer.strip()
+
+async def get_random_proxy():
+    """بررسی ۲۰ پست آخر کانال پروکسی توسط سلف‌بات و انتخاب تصادفی یک لینک"""
+    try:
+        proxies = []
+        pattern = r'(https?://t\.me/proxy\?[^\s]+|tg://proxy\?[^\s]+)'
+        
+        async for msg in user_client.iter_messages(PROXY_CHANNEL, limit=20):
+            # بررسی متن پیام
+            if msg.text:
+                found = re.findall(pattern, msg.text)
+                proxies.extend(found)
+            
+            # بررسی دکمه‌های شیشه‌ای پیام (اگر وجود داشته باشد)
+            if msg.buttons:
+                for row in msg.buttons:
+                    for btn in row:
+                        if btn.url and ('proxy?' in btn.url):
+                            proxies.append(btn.url)
+
+        if proxies:
+            return random.choice(proxies)
+    except Exception as e:
+        print(f"[Proxy Fetch Error] {e}")
+    
+    # لینک پیش‌فرض در صورت عدم دریافت
+    return "https://t.me/iRoProxy"
 
 def analyze_bpm_and_vibe(sound_segment, track_title=""):
     title_lower = (track_title or "").lower()
@@ -160,7 +189,6 @@ def update_metadata_and_cover(file_path, title, artist, cover_file):
         if audio.tags is None:
             audio.add_tags()
 
-        # پاکسازی کاورهای قبلی از حافظه پلیر
         audio.tags.delall('APIC')
 
         clean_channel = TARGET_CHANNEL.replace('@', '').replace('https://t.me/', '')
@@ -204,7 +232,6 @@ def create_demo_snippet(input_path, output_path, start_sec=40, duration_sec=40):
 
 async def wait_if_night_time():
     now = datetime.now(IRAN_TZ)
-    # بازه ۲ شب تا قبل از ۱۰ صبح (ساعت‌های ۲ تا ۹)
     if 2 <= now.hour < 10:
         target_time = now.replace(hour=10, minute=0, second=0, microsecond=0)
         seconds_to_wait = (target_time - now).total_seconds()
@@ -261,7 +288,6 @@ async def scan_sources_cycle():
 async def publisher_worker():
     while True:
         try:
-            # بررسی بازه استراحت ۲ شب تا ۱۰ صبح
             await wait_if_night_time()
 
             if MUSIC_QUEUE:
@@ -301,6 +327,9 @@ async def publisher_worker():
                 sound_obj, start_sec = create_demo_snippet(temp_full, temp_demo, start_sec=40, duration_sec=40)
                 _, vibe = analyze_bpm_and_vibe(sound_obj, track_title=track_name)
 
+                # دریافت پروکسی رندوم از کانال iRoProxy با سلف‌بات
+                proxy_link = await get_random_proxy()
+
                 m, s = divmod(start_sec, 60)
                 timestamp_str = f"{m:02d}:{s:02d}"
 
@@ -311,12 +340,14 @@ async def publisher_worker():
                     f"<b>🛑O.file👇</b>"
                 )
 
+                # چینش کپشن اصلی همراه با نقل‌قول پروکسی بین دو کادر
                 caption_full = (
                     f"<b>name: {track_name}</b>\n"
                     f"<b>full music ✅️⏯️</b>\n\n"
                     f"<b>🎧 پارت دمو (لمس کنید) ⇦ {timestamp_str}</b>\n"
                     f"<b>{vibe}</b>\n\n"
                     f"<blockquote><a href=\"{channel_link}\"><b>🎷&nbsp;&nbsp;معرفی بهترین ریمیکسها&nbsp;&nbsp;🎼</b></a></blockquote>\n"
+                    f"<blockquote><a href=\"{proxy_link}\"><b>⚡️ اتصال به پروکسی اختصاصی ⚡️</b></a></blockquote>\n"
                     f"<blockquote><b>🆔 @{clean_target}</b></blockquote>"
                 )
 
@@ -331,7 +362,7 @@ async def publisher_worker():
 
                 await asyncio.sleep(3)
 
-                # ارسال فایل کامل با کاور
+                # ارسال فایل کامل همراه کاور
                 await bot_client.send_file(
                     TARGET_CHANNEL,
                     temp_full,
@@ -363,7 +394,7 @@ async def main():
 
     print("User Client is online and connected!")
 
-    # تنظیم خودکار بیوگرافی به آیدی کانال اصلی
+    # تنظیم خودکار بیوگرافی سلف‌بات به آیدی چنل اصلی
     try:
         await user_client(UpdateProfileRequest(about="ID/@remixiyu"))
         print("[Profile] Bio set to ID/@remixiyu successfully.")
