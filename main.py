@@ -1,12 +1,11 @@
 import os
 import sys
+import time
 import asyncio
 import re
 import io
 import random
 import subprocess
-from http.server import HTTPServer, BaseHTTPRequestHandler
-import threading
 from datetime import datetime, timezone, timedelta
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -22,31 +21,13 @@ def log(msg):
     now_str = datetime.now(IRAN_TZ).strftime('%Y-%m-%d %H:%M:%S')
     print(f"[{now_str}] {msg}", flush=True)
 
-log("Starting remix-poster production script...")
-
-# وب‌سرور داخلی برای فعال نگه داشتن دائمی کانتینر در ریل‌وی
-class DummyServer(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is running successfully!")
-
-    def log_message(self, format, *args):
-        pass  # جلوگیری از چاپ لاگ‌های اضافی پورت
-
-def run_keep_alive():
-    port = int(os.getenv("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), DummyServer)
-    server.serve_forever()
-
-threading.Thread(target=run_keep_alive, daemon=True).start()
+log("Starting remix-poster production script (Locked-Thread Architecture)...")
 
 API_ID = int(os.getenv('API_ID', '2040'))
 API_HASH = os.getenv('API_HASH', 'b18441a1ff607e10a989891a5462e627')
 BOT_TOKEN = os.getenv('BOT_TOKEN', '')
 STRING_SESSION = os.getenv('STRING_SESSION', '')
 
-# کانال اصلی مقصد
 TARGET_CHANNEL = os.getenv('TARGET_CHANNEL', '@remixiyu')
 PROXY_CHANNEL = 'iRoProxy'
 
@@ -518,13 +499,13 @@ async def publisher_worker():
 
         await asyncio.sleep(40)
 
-async def main():
+async def init_services():
     log("Connecting user client...")
     await user_client.start()
 
     if not await user_client.is_user_authorized():
         log("Auth Error: STRING_SESSION is unauthorized!")
-        return
+        return False
 
     me = await user_client.get_me()
     log(f"User Client connected successfully as @{me.username or me.id}!")
@@ -537,9 +518,22 @@ async def main():
     asyncio.create_task(scan_photos_cycle())
     asyncio.create_task(scan_music_cycle())
     asyncio.create_task(publisher_worker())
+    return True
 
+def main():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    success = loop.run_until_complete(init_services())
+    
+    if not success:
+        log("Services initialization failed. Exiting.")
+        return
+
+    log("All tasks scheduled. Main thread entering active synchronous lock.")
+    # قفل کردن ترد اصلی برنامه به صورت همگام تا ریل‌وی هرگز کانتینر را کار خاتمه‌یافته تلقی نکند
     while True:
-        await asyncio.sleep(3600)
+        loop.run_until_complete(asyncio.sleep(1))
+        time.sleep(1)
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    main()
