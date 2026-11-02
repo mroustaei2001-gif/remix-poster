@@ -272,12 +272,22 @@ async def publisher_worker():
         await asyncio.sleep(POST_INTERVAL)
 
 async def main():
-    await user_client.start()
+    # اتصال قطعی کلاینت کاربر با سشن استرینگ
+    print("[Init] Connecting user client...")
+    await user_client.connect()
+    
+    if not await user_client.is_user_authorized():
+        print("[Auth Error] STRING_SESSION نامعتبر یا منقضی شده است!")
+        return
+
     print("User Client is online and connected!")
 
+    # اتصال ربات رسمی
+    print("[Init] Starting bot client...")
     await bot_client.start(bot_token=BOT_TOKEN)
     print("Channel Bot is online and running...")
 
+    # شروع تسک‌ها پس از اطمینان ۱۰۰٪ از اتصال هر دو کلاینت
     asyncio.create_task(scan_sources_cycle())
     asyncio.create_task(publisher_worker())
 
