@@ -28,15 +28,33 @@ SOURCE_CHANNELS = [
 ]
 
 COVER_PATH = "cover.png"
+SEEN_FILE = "seen_tracks.txt"
 
-# کلاینت اکانت کاربری برای اسکن و دانلود از کانال‌های مبدا
+# کلاینت اکانت کاربری برای اسکن و خواندن کانال‌های منبع
 user_client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
 
-# کلاینت بات رسمی برای آپلود و پست در کانال مقصد
+# کلاینت بات رسمی برای ارسال پست‌ها در کانال مقصد
 bot_client = TelegramClient('bot_session', API_ID, API_HASH)
 
 MUSIC_QUEUE = []
+
+# بارگذاری تاریخچه آهنگ‌های قبلی از فایل متنی
 SEEN_TRACKS = set()
+if os.path.exists(SEEN_FILE):
+    try:
+        with open(SEEN_FILE, "r", encoding="utf-8") as f:
+            SEEN_TRACKS = set(line.strip() for line in f if line.strip())
+    except Exception as e:
+        print(f"[Storage Read Error] {e}")
+
+def save_seen_track(track_key: str):
+    """ذخیره شناسه آهنگ جهت جلوگیری از ارسال مجدد پس از ری‌دیپلوی"""
+    SEEN_TRACKS.add(track_key)
+    try:
+        with open(SEEN_FILE, "a", encoding="utf-8") as f:
+            f.write(f"{track_key}\n")
+    except Exception as e:
+        print(f"[Storage Save Error] {e}")
 
 def clean_track_name(title):
     if not title:
@@ -96,17 +114,15 @@ def create_demo_snippet(input_path, output_path, start_sec=40, duration_sec=40):
 async def scan_sources_cycle():
     while True:
         try:
-            if len(MUSIC_QUEUE) < 4:
-                print("[Scanner] Checking sources for new remixes...")
-                collected_count = 0
-
+            if len(MUSIC_QUEUE) < 6:
+                print("[Scanner] Checking all source channels for fresh tracks...")
+                
                 for ch in SOURCE_CHANNELS:
-                    if len(MUSIC_QUEUE) >= 4 or collected_count >= 4:
+                    if len(MUSIC_QUEUE) >= 6:
                         break
 
                     try:
-                        # اسکن باید با user_client انجام شود نه با bot_client
-                        async for msg in user_client.iter_messages(ch, limit=10):
+                        async for msg in user_client.iter_messages(ch, limit=15):
                             if not msg.audio:
                                 continue
 
@@ -117,7 +133,7 @@ async def scan_sources_cycle():
                                     duration = attr.duration or 0
                                     raw_title = attr.title or ""
 
-                            # فیلتر دموهای کانال منبع
+                            # فیلتر کردن پیش‌نمایش‌های موجود در مبدا
                             if duration < 100:
                                 continue
                             if any(w in raw_title.lower() for w in ['demo', 'دمو', 'preview']):
@@ -129,12 +145,11 @@ async def scan_sources_cycle():
                             if track_key in SEEN_TRACKS:
                                 continue
 
-                            SEEN_TRACKS.add(track_key)
+                            save_seen_track(track_key)
                             MUSIC_QUEUE.append(msg)
-                            collected_count += 1
-                            print(f"[Scanner] Added track: {raw_title} ({duration}s)")
+                            print(f"[Scanner] Added track: {raw_title} ({duration}s) from {ch}")
 
-                            if len(MUSIC_QUEUE) >= 4 or collected_count >= 4:
+                            if len(MUSIC_QUEUE) >= 6:
                                 break
                     except Exception as ch_err:
                         print(f"[Scanner Channel Error] {ch}: {ch_err}")
@@ -184,7 +199,7 @@ async def publisher_worker():
                 update_metadata_and_cover(temp_full, display_title, display_performer, COVER_PATH)
                 create_demo_snippet(temp_full, temp_demo)
 
-                # متن کپشن دمو (بدون لوگو، تماماً بولد، با نقل‌قول رنگی آیدی)
+                # کپشن دمو (بدون لوگو، تماماً بولد با کادر کیوت آیدی)
                 caption_demo = (
                     f"<b>name: {track_name}</b>\n"
                     f"<b>Demo⚠️⏯️</b>\n\n"
@@ -192,12 +207,12 @@ async def publisher_worker():
                     f"<b>org.m👇</b>"
                 )
 
-                # متن کپشن نسخه اصلی (تماماً بولد، متن معرفی لینک‌دار کانال و آیدی درون کادر نقل‌قول رنگی)
+                # کپشن موزیک اصلی (دو کادر کیوت کاملاً جداگانه مانند تصویر دوم)
                 caption_full = (
                     f"<b>name: {track_name}</b>\n"
                     f"<b>full music ✅️⏯️</b>\n\n"
-                    f"<blockquote><a href=\"{channel_link}\"><b>معرفی بهترین ریمیکسها 🎼🎷</b></a>\n"
-                    f"<b>🆔 @{clean_target}</b></blockquote>"
+                    f"<blockquote><a href=\"{channel_link}\"><b>🎷&nbsp;&nbsp;معرفی بهترین ریمیکسها&nbsp;&nbsp;🎼</b></a></blockquote>\n"
+                    f"<blockquote><b>🆔 @{clean_target}</b></blockquote>"
                 )
 
                 # ارسال نسخه دمو (بدون thumb برای حذف لوگو)
@@ -211,7 +226,7 @@ async def publisher_worker():
 
                 await asyncio.sleep(3)
 
-                # ارسال نسخه اصلی (با کاور و با parse_mode html)
+                # ارسال نسخه کامل (همراه با کاور)
                 await bot_client.send_file(
                     TARGET_CHANNEL,
                     temp_full,
@@ -231,13 +246,10 @@ async def publisher_worker():
 
         await asyncio.sleep(POST_INTERVAL)
 
-
 async def main():
-    # روشن کردن کلاینت اکانت برای خواندن کانال‌ها
     await user_client.start()
     print("User Client is online and connected!")
 
-    # روشن کردن کلاینت ربات رسمی برای انتشار پست‌ها
     await bot_client.start(bot_token=BOT_TOKEN)
     print("Channel Bot is online and running...")
 
