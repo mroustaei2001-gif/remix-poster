@@ -25,7 +25,6 @@ BOT_TOKEN = os.getenv('BOT_TOKEN', '')
 STRING_SESSION = os.getenv('STRING_SESSION', '')
 
 TARGET_CHANNEL = os.getenv('TARGET_CHANNEL', '@xibopay')
-# تنظیم پیش‌فرض روی ۲۰ ثانیه جهت تست
 POST_INTERVAL = int(os.getenv('POST_INTERVAL', '20'))
 PROXY_CHANNEL = 'iRoProxy'
 
@@ -62,7 +61,6 @@ PHOTO_QUEUE = []
 SEEN_TRACKS = set()
 SEEN_PHOTOS = set()
 
-# متغیر کنترل چرخه متناوب انتشار (عکس‌دار / بدون عکس)
 INCLUDE_PHOTO_CYCLE = True
 
 if os.path.exists(SEEN_FILE):
@@ -202,7 +200,6 @@ def update_metadata_and_cover(file_path, title, artist, cover_file):
     except Exception as e:
         log(f"Tag Error: {e}")
 
-# خروجی استاندارد ویس مونو ۴۸ کیلوهرتز Ogg Opus با شکل موج تلگرام
 def create_demo_voice_ffmpeg(input_path, output_path, start_sec=40, duration_sec=40):
     cmd = [
         "ffmpeg", "-y", "-ss", str(start_sec), "-t", str(duration_sec),
@@ -237,7 +234,15 @@ async def scan_photos_cycle():
                                 continue
 
                             caption = (msg.text or "").strip()
-                            if re.search(r'(https?://|t\.me/|joinchat)', caption, re.IGNORECASE):
+
+                            # نادیده گرفتن منشن‌های خود پلی‌وایبز در کانال خودش
+                            check_text = caption
+                            if ch.lower() == 'playvibes':
+                                check_text = re.sub(r'(https?://)?t\.me/playvibes\S*', '', check_text, flags=re.IGNORECASE)
+                                check_text = re.sub(r'@playvibes', '', check_text, flags=re.IGNORECASE)
+
+                            # رد کردن در صورت وجود لینک‌های متفرقه یا دعوت‌نامه
+                            if re.search(r'(https?://|t\.me/|joinchat)', check_text, re.IGNORECASE):
                                 continue
 
                             photo_key = f"photo_{msg.chat_id}_{msg.id}"
@@ -282,7 +287,6 @@ async def scan_music_cycle():
                                     duration = attr.duration or 0
                                     raw_title = attr.title or ""
 
-                            # فیلتر سقف زمانی ۱۰ دقیقه (۶۰۰ ثانیه) و حداقل ۱۰۰ ثانیه
                             if duration < 100 or duration > 600:
                                 continue
 
@@ -335,6 +339,7 @@ async def publisher_worker():
                     photo_msg = PHOTO_QUEUE.pop(0)
                     temp_photo = f"photo_{photo_msg.id}.jpg"
                     await user_client.download_media(photo_msg, file=temp_photo)
+                    # کپشن فقط آیدی و لینک کانال شما
                     photo_caption = f'<blockquote><a href="{channel_link}"><b>🆔 @{clean_target}</b></a></blockquote>'
 
                 prepared_tracks = []
@@ -376,7 +381,7 @@ async def publisher_worker():
                     m, s = divmod(start_sec, 60)
                     timestamp_str = f"{m:02d}:{s:02d}"
 
-                    # کپشن دمو (فقط نقل‌قول آیدی لینک‌دار طبق عکس دوم)
+                    # کپشن دمو (فقط منشن پایین)
                     caption_demo = f'<blockquote><a href="{channel_link}"><b>🆔 @{clean_target}</b></a></blockquote>'
 
                     caption_full = (
@@ -401,7 +406,7 @@ async def publisher_worker():
 
                 log("Broadcasting package to channel...")
 
-                # ۱. ارسال عکس با اسپویلر (در صورت چرخه عکس‌دار)
+                # ارسال تصویر با اسپویلر در چرخه عکس‌دار
                 if INCLUDE_PHOTO_CYCLE and temp_photo:
                     uploaded_photo = await bot_client.upload_file(temp_photo)
                     target_peer = await bot_client.get_input_entity(TARGET_CHANNEL)
@@ -417,9 +422,8 @@ async def publisher_worker():
                     if os.path.exists(temp_photo):
                         os.remove(temp_photo)
 
-                # ۲. ارسال متوالی: دمو اول + موزیک اول / سپس دمو دوم + موزیک دوم
+                # ارسال بسته‌های موزیک و ویس
                 for t in prepared_tracks:
-                    # ارسال به عنوان ویس با موج صوتی
                     await bot_client.send_file(
                         TARGET_CHANNEL,
                         t["temp_demo"],
@@ -430,7 +434,6 @@ async def publisher_worker():
                         attributes=[DocumentAttributeAudio(duration=40, voice=True)]
                     )
 
-                    # ارسال فایل موزیک کامل
                     await bot_client.send_file(
                         TARGET_CHANNEL,
                         t["temp_full"],
@@ -441,14 +444,12 @@ async def publisher_worker():
                         attributes=[DocumentAttributeAudio(duration=t["duration"], title=t["display_title"], performer=t["display_performer"])]
                     )
 
-                # پاکسازی فایل‌های موقت
                 for t in prepared_tracks:
                     if os.path.exists(t["temp_demo"]):
                         os.remove(t["temp_demo"])
                     if os.path.exists(t["temp_full"]):
                         os.remove(t["temp_full"])
 
-                # تغییر وضعیت برای تست بعدی (نوبت بعد بدون عکس)
                 INCLUDE_PHOTO_CYCLE = not INCLUDE_PHOTO_CYCLE
                 log(f"Batch posted! Next cycle photo status: {INCLUDE_PHOTO_CYCLE}")
 
