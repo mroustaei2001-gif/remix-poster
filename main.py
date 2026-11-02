@@ -66,34 +66,73 @@ def clean_artist_name(performer):
     performer = re.sub(r'https?://\S+', '', performer)
     return performer.strip()
 
-def analyze_bpm_and_vibe(sound_segment):
+def analyze_bpm_and_vibe(sound_segment, track_title=""):
+    title_lower = (track_title or "").lower()
+
+    # ۱. اولویت اول: فیلتر کلمات کلیدی در نام موزیک
+    dark_keywords = ['dep', 'dark', 'sad', 'ghamgin', 'gham', 'tanha', 'del', 'ghose', 'tanhae', 'بغض', 'غم', 'دارک', 'گریه', 'دپ', 'تنهایی', 'خاطره', 'اشک', 'دلشکسته', 'دلگیر', 'مرگ']
+    romantic_keywords = ['love', 'romantic', 'delbar', 'eshgh', 'yar', 'عشق', 'عاشقانه', 'دلبر', 'بارون', 'آروم', 'چشمات', 'آرامش', 'یار']
+    party_keywords = ['party', 'dance', 'shad', 'raghs', 'bomb', 'قر', 'شاد', 'پارتی', 'عروسی', 'انرژی', 'ترکوندن']
+    gang_keywords = ['bass', 'trap', 'gang', 'heavy', 'drill', 'بیس', 'گنگ', 'شوتی', 'دریل', 'سنگین']
+
+    if any(k in title_lower for k in dark_keywords):
+        return 85, "🥀 فاز غمگین / دارک"
+    if any(k in title_lower for k in romantic_keywords):
+        return 98, "🍷 فاز رمانتیک"
+    if any(k in title_lower for k in party_keywords):
+        return 126, "💃 شاد و شنگول"
+    if any(k in title_lower for k in gang_keywords):
+        return 138, "🚀 فاز سنگین / بیس‌دار"
+
+    # ۲. تحلیل ضربان صوتی (پیدا کردن پیک‌های بیس در بازه اوج آهنگ)
     try:
-        raw_samples = sound_segment[30000:60000].get_array_of_samples()
-        if not raw_samples:
-            return 125, "🏎️ فاز دور دور"
+        # نمونه‌گیری از ثانیه ۴۰ تا ۷۰ (پارت ورس/اوج)
+        sample_audio = sound_segment[40000:70000]
+        if len(sample_audio) < 10000:
+            sample_audio = sound_segment[:30000]
 
-        step = 50
-        sliced = raw_samples[::step]
-        avg_energy = sum(abs(s) for s in sliced) / max(len(sliced), 1)
+        # تبدیل به مونو و گرفتن داده‌های نمونه
+        samples = sample_audio.set_channels(1).get_array_of_samples()
+        if not samples:
+            return 120, "🏎️ فاز دور دور"
 
-        calc_bpm = 90 + int((avg_energy % 55))
+        # شناسایی ضربان‌ها (پیک‌های بلند با فاصله زمانی مشخص)
+        peak_count = 0
+        threshold = max(abs(s) for s in samples[::100]) * 0.65
+        cooldown = 0
+        min_cooldown = int(sample_audio.frame_rate * 0.28) # حداقل فاصله بین دو ضرب بیس
 
-        if calc_bpm >= 135:
+        for s in samples:
+            if cooldown > 0:
+                cooldown -= 1
+                continue
+            if abs(s) > threshold:
+                peak_count += 1
+                cooldown = min_cooldown
+
+        # تبدیل تعداد ضرب‌ها در ۳۰ ثانیه به تمپو در دقیقه (BPM)
+        duration_sec = len(sample_audio) / 1000.0
+        bpm = int((peak_count / duration_sec) * 60)
+
+        # دسته‌بندی واقع‌گرایانه
+        if bpm >= 135:
             vibe = "🚀 فاز سنگین / بیس‌دار"
-        elif 125 <= calc_bpm < 135:
+        elif 122 <= bpm < 135:
             vibe = "🏎️ فاز دور دور"
-        elif 115 <= calc_bpm < 125:
+        elif 112 <= bpm < 122:
             vibe = "💃 شاد و شنگول"
-        elif 105 <= calc_bpm < 115:
+        elif 100 <= bpm < 112:
             vibe = "✨ فاز قیلی‌ویلیتور"
-        elif 98 <= calc_bpm < 105:
+        elif 88 <= bpm < 100:
             vibe = "🍷 فاز رمانتیک"
         else:
             vibe = "🥀 فاز غمگین / دارک"
 
-        return calc_bpm, vibe
+        return bpm, vibe
+
     except Exception:
-        return 120, "🏎️ فاز دور دور"
+        return 110, "🏎️ فاز دور دور"
+
 
 def update_metadata_and_cover(file_path, title, artist, cover_file):
     try:
@@ -237,7 +276,7 @@ async def publisher_worker():
                 update_metadata_and_cover(temp_full, display_title, display_performer, COVER_PATH)
                 
                 sound_obj, start_sec = create_demo_snippet(temp_full, temp_demo, start_sec=40, duration_sec=40)
-                _, vibe = analyze_bpm_and_vibe(sound_obj)
+_, vibe = analyze_bpm_and_vibe(sound_obj, track_title=track_name)
 
                 m, s = divmod(start_sec, 60)
                 timestamp_str = f"{m:02d}:{s:02d}"
