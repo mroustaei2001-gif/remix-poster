@@ -13,14 +13,14 @@ from mutagen.mp3 import MP3
 from mutagen.id3 import ID3, TIT2, TPE1, COMM, APIC
 from PIL import Image
 
-# --- متغیرهای محیطی و کانفیگ ---
+# --- تنظیمات تستی ---
 API_ID = int(os.getenv('API_ID', '2040'))
 API_HASH = os.getenv('API_HASH', 'b18441a1ff607e10a989891a5462e627')
 BOT_TOKEN = os.getenv('BOT_TOKEN', '')
 STRING_SESSION = os.getenv('STRING_SESSION', '')
 
-TARGET_CHANNEL = os.getenv('TARGET_CHANNEL', '@remixiyu')
-POST_INTERVAL = int(os.getenv('POST_INTERVAL', '14400'))  # هر ۴ ساعت یک‌بار
+TARGET_CHANNEL = os.getenv('TARGET_CHANNEL', '@xibopay')
+POST_INTERVAL = int(os.getenv('POST_INTERVAL', '15'))  # تست سریع: هر ۱۵ ثانیه یک پست
 PROXY_CHANNEL = 'iRoProxy'
 
 SOURCE_CHANNELS = [
@@ -35,7 +35,6 @@ SOURCE_CHANNELS = [
 
 COVER_PATH = "cover.png"
 SEEN_FILE = "seen_tracks.txt"
-IRAN_TZ = timezone(timedelta(hours=3, minutes=30))
 
 user_client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
 bot_client = TelegramClient('bot_session', API_ID, API_HASH)
@@ -74,51 +73,31 @@ def clean_artist_name(performer):
     return performer.strip()
 
 async def get_random_proxy():
-    """بررسی ۲۰ پست آخر کانال پروکسی توسط سلف‌بات و انتخاب تصادفی یک لینک"""
     try:
         proxies = []
         pattern = r'(https?://t\.me/proxy\?[^\s]+|tg://proxy\?[^\s]+)'
-        
         async for msg in user_client.iter_messages(PROXY_CHANNEL, limit=20):
-            # بررسی متن پیام
             if msg.text:
                 found = re.findall(pattern, msg.text)
                 proxies.extend(found)
-            
-            # بررسی دکمه‌های شیشه‌ای پیام (اگر وجود داشته باشد)
             if msg.buttons:
                 for row in msg.buttons:
                     for btn in row:
                         if btn.url and ('proxy?' in btn.url):
                             proxies.append(btn.url)
-
         if proxies:
             return random.choice(proxies)
     except Exception as e:
         print(f"[Proxy Fetch Error] {e}")
-    
-    # لینک پیش‌فرض در صورت عدم دریافت
     return "https://t.me/iRoProxy"
 
 def analyze_bpm_and_vibe(sound_segment, track_title=""):
     title_lower = (track_title or "").lower()
 
-    dark_keywords = [
-        'dep', 'dark', 'sad', 'ghamgin', 'gham', 'tanha', 'del', 'ghose', 'tanhae', 
-        'بغض', 'غم', 'دارک', 'گریه', 'دپ', 'تنهایی', 'خاطره', 'اشک', 'دلشکسته', 'دلگیر', 'مرگ', 'شب'
-    ]
-    romantic_keywords = [
-        'love', 'romantic', 'delbar', 'eshgh', 'yar', 'baroon',
-        'عشق', 'عاشقانه', 'دلبر', 'بارون', 'آروم', 'چشمات', 'آرامش', 'یار', 'جانم', 'من و تو'
-    ]
-    party_keywords = [
-        'party', 'dance', 'shad', 'raghs', 'bomb', 'gheri', 'wedding',
-        'قر', 'شاد', 'پارتی', 'عروسی', 'انرژی', 'ترکوندن', 'بندری', 'هللیوس'
-    ]
-    gang_keywords = [
-        'bass boost', 'heavy bass', 'drill', 'gang', 'shooti',
-        'بیس سنگین', 'دریل', 'شوتی', 'بیس دار', 'گنگستر', 'سیستمی'
-    ]
+    dark_keywords = ['dep', 'dark', 'sad', 'ghamgin', 'gham', 'tanha', 'del', 'ghose', 'tanhae', 'بغض', 'غم', 'دارک', 'گریه', 'دپ', 'تنهایی', 'خاطره', 'اشک', 'دلشکسته', 'دلگیر', 'مرگ', 'شب']
+    romantic_keywords = ['love', 'romantic', 'delbar', 'eshgh', 'yar', 'baroon', 'عشق', 'عاشقانه', 'دلبر', 'بارون', 'آروم', 'چشمات', 'آرامش', 'یار', 'جانم', 'من و تو']
+    party_keywords = ['party', 'dance', 'shad', 'raghs', 'bomb', 'gheri', 'wedding', 'قر', 'شاد', 'پارتی', 'عروسی', 'انرژی', 'ترکوندن', 'بندری', 'هللیوس']
+    gang_keywords = ['bass boost', 'heavy bass', 'drill', 'gang', 'shooti', 'بیس سنگین', 'دریل', 'شوتی', 'بیس دار', 'گنگستر', 'سیستمی']
 
     if any(k in title_lower for k in dark_keywords):
         return 85, "🥀 فاز غمگین / دارک"
@@ -175,7 +154,7 @@ def analyze_bpm_and_vibe(sound_segment, track_title=""):
         return calculated_tempo, vibe
 
     except Exception as e:
-        print(f"[Vibe Detection Fallback] {e}")
+        print(f"[Vibe Fallback] {e}")
         return 112, "🏎️ فاز دور دور"
 
 def update_metadata_and_cover(file_path, title, artist, cover_file):
@@ -230,15 +209,6 @@ def create_demo_snippet(input_path, output_path, start_sec=40, duration_sec=40):
     demo.export(output_path, format="mp3", bitrate="192k")
     return sound, start_sec
 
-async def wait_if_night_time():
-    now = datetime.now(IRAN_TZ)
-    if 2 <= now.hour < 10:
-        target_time = now.replace(hour=10, minute=0, second=0, microsecond=0)
-        seconds_to_wait = (target_time - now).total_seconds()
-        if seconds_to_wait > 0:
-            print(f"[Scheduler] بازه استراحت شبانه ({now.strftime('%H:%M')}). صبر تا ساعت ۱۰:۰۰ صبح به مدت {int(seconds_to_wait)} ثانیه...")
-            await asyncio.sleep(seconds_to_wait)
-
 async def scan_sources_cycle():
     while True:
         try:
@@ -283,13 +253,11 @@ async def scan_sources_cycle():
         except Exception as e:
             print(f"[Scanner Main Error] {e}")
 
-        await asyncio.sleep(1200)
+        await asyncio.sleep(60)
 
 async def publisher_worker():
     while True:
         try:
-            await wait_if_night_time()
-
             if MUSIC_QUEUE:
                 msg = MUSIC_QUEUE.pop(0)
                 print(f"[Publisher] Processing track ID {msg.id}...")
@@ -327,7 +295,6 @@ async def publisher_worker():
                 sound_obj, start_sec = create_demo_snippet(temp_full, temp_demo, start_sec=40, duration_sec=40)
                 _, vibe = analyze_bpm_and_vibe(sound_obj, track_title=track_name)
 
-                # دریافت پروکسی رندوم از کانال iRoProxy با سلف‌بات
                 proxy_link = await get_random_proxy()
 
                 m, s = divmod(start_sec, 60)
@@ -340,7 +307,6 @@ async def publisher_worker():
                     f"<b>🛑O.file👇</b>"
                 )
 
-                # چینش کپشن اصلی همراه با نقل‌قول پروکسی بین دو کادر
                 caption_full = (
                     f"<b>name: {track_name}</b>\n"
                     f"<b>full music ✅️⏯️</b>\n\n"
@@ -351,7 +317,6 @@ async def publisher_worker():
                     f"<blockquote><b>🆔 @{clean_target}</b></blockquote>"
                 )
 
-                # ارسال دمو بدون کاور
                 await bot_client.send_file(
                     TARGET_CHANNEL,
                     temp_demo,
@@ -362,7 +327,6 @@ async def publisher_worker():
 
                 await asyncio.sleep(3)
 
-                # ارسال فایل کامل همراه کاور
                 await bot_client.send_file(
                     TARGET_CHANNEL,
                     temp_full,
@@ -394,10 +358,9 @@ async def main():
 
     print("User Client is online and connected!")
 
-    # تنظیم خودکار بیوگرافی سلف‌بات به آیدی چنل اصلی
     try:
-        await user_client(UpdateProfileRequest(about="ID/@remixiyu"))
-        print("[Profile] Bio set to ID/@remixiyu successfully.")
+        await user_client(UpdateProfileRequest(about="ID/@xibopay"))
+        print("[Profile] Bio set to ID/@xibopay successfully.")
     except Exception as e:
         print(f"[Profile Bio Error] {e}")
 
