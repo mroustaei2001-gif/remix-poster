@@ -400,8 +400,19 @@ async def scan_music_cycle():
                             clean_title = clean_track_name(raw_title).lower()
                             track_key = f"{clean_title}_{duration}"
 
+                            # بررسی هوشمند تشابه: اگر هر کلمه‌ای از آهنگ قبلاً ارسال شده بود رد شود
+                            is_duplicate = False
                             if track_key in SEEN_TRACKS or clean_title in SEEN_TRACKS:
+                                is_duplicate = True
+                            else:
+                                for seen in list(SEEN_TRACKS):
+                                    if len(seen) > 4 and (seen in clean_title or clean_title in seen):
+                                        is_duplicate = True
+                                        break
+
+                            if is_duplicate:
                                 continue
+
 
                             is_foreign = (ch == FOREIGN_MUSIC_CHANNEL)
                             collected_candidates.append({
