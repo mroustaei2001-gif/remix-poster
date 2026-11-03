@@ -31,7 +31,14 @@ STRING_SESSION = os.getenv('STRING_SESSION', '')
 TARGET_CHANNEL = os.getenv('TARGET_CHANNEL', '@remixiyu')
 PROXY_CHANNEL = 'iRoProxy'
 
-SCHEDULE_HOURS = [2, 10, 14, 18, 22]
+# جدول زمان‌بندی:
+SCHEDULE_CONFIG = {
+    (10, 0): True,    # ۱۰:۰۰ صبح -> عکس + ۲ دمو و ۲ موزیک کامل
+    (14, 0): False,   # ۱۴:۰۰ ظهر -> فقط ۲ دمو و ۲ موزیک کامل
+    (18, 0): True,    # ۱۸:۰۰ عصر -> عکس + ۲ دمو و ۲ موزیک کامل
+    (22, 0): True,    # ۲۲:۰۰ شب -> عکس + ۲ دمو و ۲ موزیک کامل
+    (1, 30): False    # ۰۱:۳۰ بامداد -> فقط ۲ دمو و ۲ موزیک کامل
+}
 
 SOURCE_MUSIC_CHANNELS = [
     'RapRemixxx',
@@ -66,8 +73,6 @@ MUSIC_QUEUE = []
 PHOTO_QUEUE = []
 SEEN_TRACKS = set()
 SEEN_PHOTOS = set()
-
-INCLUDE_PHOTO_CYCLE = True
 
 if os.path.exists(SEEN_FILE):
     try:
@@ -147,9 +152,7 @@ async def ensure_connection():
             log(f"Reconnect Error: {e}")
 
 async def load_history_from_target():
-    """همگام‌سازی آهنگ‌های اخیر کانال مقصد برای جلوگیری قطعی از ارسال مجدد"""
-    global SEEN_TRACKS
-    # مسدودسازی دستی و قطعی ترک‌های ارسال‌شده امروز
+    global SEEN_TRACKS, SEEN_PHOTOS
     blocked_keywords = [
         "halet khobe", 
         "khodam miam mibaramet", 
@@ -165,9 +168,11 @@ async def load_history_from_target():
         SEEN_TRACKS.add(b)
 
     try:
-        log(f"Syncing recent tracks from destination channel {TARGET_CHANNEL}...")
-        count = 0
-        async for msg in user_client.iter_messages(TARGET_CHANNEL, limit=100):
+        log(f"Syncing recent tracks & photos from destination channel {TARGET_CHANNEL}...")
+        t_count = 0
+        p_count = 0
+        async for msg in user_client.iter_messages(TARGET_CHANNEL, limit=120):
+            # ثبت آهنگ‌های گذشته کانال
             if msg.audio:
                 for attr in msg.audio.attributes:
                     if isinstance(attr, DocumentAttributeAudio):
@@ -175,15 +180,24 @@ async def load_history_from_target():
                         if t:
                             SEEN_TRACKS.add(t)
                             SEEN_TRACKS.add(f"{t}_{attr.duration or 0}")
-                            count += 1
+                            t_count += 1
             if msg.text:
                 for line in msg.text.splitlines():
                     if "name:" in line.lower():
                         cleaned_line = clean_track_name(line.split(":")[-1]).lower()
                         if cleaned_line:
                             SEEN_TRACKS.add(cleaned_line)
-                            count += 1
-        log(f"Successfully loaded and locked {count} recent tracks from destination channel.")
+                            t_count += 1
+
+            # ثبت تصاویر قبلی ارسال‌شده در کانال
+            if msg.photo:
+                SEEN_PHOTOS.add(f"photo_id_{msg.photo.id}")
+                p_count += 1
+            elif msg.media and hasattr(msg.media, 'photo') and msg.media.photo:
+                SEEN_PHOTOS.add(f"photo_id_{msg.media.photo.id}")
+                p_count += 1
+
+        log(f"Successfully locked {t_count} tracks and {p_count} photos from channel history.")
     except Exception as e:
         log(f"Target History Sync Error: {e}")
 
@@ -325,13 +339,13 @@ async def scan_photos_cycle():
                             if count % 30 == 0:
                                 await asyncio.sleep(0.05)
 
-                            is_valid_image = False
+                            photo_obj = None
                             if msg.photo:
-                                is_valid_image = True
+                                photo_obj = msg.photo
                             elif msg.media and hasattr(msg.media, 'photo') and msg.media.photo:
-                                is_valid_image = True
+                                photo_obj = msg.media.photo
 
-                            if not is_valid_image:
+                            if not photo_obj:
                                 continue
 
                             caption = (msg.text or "").strip()
@@ -344,15 +358,20 @@ async def scan_photos_cycle():
                             if re.search(r'(https?://|t\.me/|joinchat)', check_text, re.IGNORECASE):
                                 continue
 
-                            photo_key = f"photo_{msg.chat_id}_{msg.id}"
-                            if photo_key in SEEN_PHOTOS:
+                            # کلیدهای چندلایه ضدتکرار عکس: هم بر اساس photo.id و هم بر اساس پیام
+                            photo_id_key = f"photo_id_{photo_obj.id}"
+                            photo_msg_key = f"photo_{msg.chat_id}_{msg.id}"
+
+                            if photo_id_key in SEEN_PHOTOS or photo_msg_key in SEEN_PHOTOS:
                                 continue
 
-                            save_seen_photo(photo_key)
+                            save_seen_photo(photo_id_key)
+                            save_seen_photo(photo_msg_key)
+
                             PHOTO_QUEUE.append({
                                 'chat': ch,
                                 'id': msg.id,
-                                'key': photo_key
+                                'key': photo_id_key
                             })
                             log(f"Photo Queued from {ch} (Total: {len(PHOTO_QUEUE)})")
 
@@ -400,7 +419,6 @@ async def scan_music_cycle():
                             clean_title = clean_track_name(raw_title).lower()
                             track_key = f"{clean_title}_{duration}"
 
-                            # بررسی هوشمند تشابه: اگر هر کلمه‌ای از آهنگ قبلاً ارسال شده بود رد شود
                             is_duplicate = False
                             if track_key in SEEN_TRACKS or clean_title in SEEN_TRACKS:
                                 is_duplicate = True
@@ -412,7 +430,6 @@ async def scan_music_cycle():
 
                             if is_duplicate:
                                 continue
-
 
                             is_foreign = (ch == FOREIGN_MUSIC_CHANNEL)
                             collected_candidates.append({
@@ -444,7 +461,6 @@ async def scan_music_cycle():
         await asyncio.sleep(60)
 
 async def publisher_worker():
-    global INCLUDE_PHOTO_CYCLE
     last_processed_slot = get_last_processed_slot()
 
     while True:
@@ -453,16 +469,26 @@ async def publisher_worker():
             current_hour = now.hour
             current_minute = now.minute
 
-            # انتشار صرفاً در ساعات تعیین‌شده و در ۵ دقیقه اول ساعت
-            if current_hour in SCHEDULE_HOURS and current_minute <= 5:
-                slot_key = f"{now.strftime('%Y-%m-%d')}_{current_hour}"
+            matched_slot = None
+            include_photo = False
+
+            # بررسی تطابق با ساعت و دقیقه جدول و ۵ دقیقه اول بازه
+            for (sh, sm), has_photo in SCHEDULE_CONFIG.items():
+                if current_hour == sh and sm <= current_minute <= sm + 5:
+                    matched_slot = (sh, sm)
+                    include_photo = has_photo
+                    break
+
+            if matched_slot is not None:
+                sh, sm = matched_slot
+                slot_key = f"{now.strftime('%Y-%m-%d')}_{sh:02d}_{sm:02d}"
 
                 if last_processed_slot != slot_key:
-                    log(f"--- Triggering broadcast for {current_hour:02d}:00 ---")
+                    log(f"--- Triggering broadcast for {sh:02d}:{sm:02d} (Photo: {include_photo}) ---")
                     await ensure_connection()
 
                     retry_wait = 0
-                    while (len(MUSIC_QUEUE) < 2 or (INCLUDE_PHOTO_CYCLE and len(PHOTO_QUEUE) < 1)) and retry_wait < 12:
+                    while (len(MUSIC_QUEUE) < 2 or (include_photo and len(PHOTO_QUEUE) < 1)) and retry_wait < 12:
                         await asyncio.sleep(10)
                         retry_wait += 1
 
@@ -472,7 +498,7 @@ async def publisher_worker():
 
                         temp_photo = None
                         photo_caption = ""
-                        if INCLUDE_PHOTO_CYCLE and len(PHOTO_QUEUE) >= 1:
+                        if include_photo and len(PHOTO_QUEUE) >= 1:
                             p_item = PHOTO_QUEUE.pop(0)
                             try:
                                 fresh_photo_msg = await user_client.get_messages(p_item['chat'], ids=p_item['id'])
@@ -500,7 +526,6 @@ async def publisher_worker():
 
                                 clean_target = TARGET_CHANNEL.replace('@', '').replace('https://t.me/', '')
 
-                                # اعمال سیاست نام‌گذاری و زیرنویس فایل
                                 if valid_artist:
                                     display_title = f"{track_name} - @{clean_target}"
                                     display_performer = valid_artist
@@ -551,50 +576,58 @@ async def publisher_worker():
                                 log(f"Music Fresh Download Error for {m_item.get('title')}: {m_err}")
 
                         if prepared_tracks:
-                            log("Broadcasting package to production channel...")
+                            try:
+                                log("Broadcasting package to production channel...")
 
-                            if temp_photo and os.path.exists(temp_photo):
-                                uploaded_photo = await bot_client.upload_file(temp_photo)
-                                target_peer = await bot_client.get_input_entity(TARGET_CHANNEL)
-                                caption_text, entities = await bot_client._parse_message_text(photo_caption, 'html')
+                                # ۱. ارسال عکس اسپویلر
+                                if temp_photo and os.path.exists(temp_photo):
+                                    uploaded_photo = await bot_client.upload_file(temp_photo)
+                                    target_peer = await bot_client.get_input_entity(TARGET_CHANNEL)
+                                    caption_text, entities = await bot_client._parse_message_text(photo_caption, 'html')
 
-                                await bot_client(SendMediaRequest(
-                                    peer=target_peer,
-                                    media=InputMediaUploadedPhoto(file=uploaded_photo, spoiler=True),
-                                    message=caption_text,
-                                    entities=entities,
-                                    silent=True
-                                ))
-                                os.remove(temp_photo)
+                                    await bot_client(SendMediaRequest(
+                                        peer=target_peer,
+                                        media=InputMediaUploadedPhoto(file=uploaded_photo, spoiler=True),
+                                        message=caption_text,
+                                        entities=entities,
+                                        silent=True
+                                    ))
 
-                            for t in prepared_tracks:
-                                await bot_client.send_file(
-                                    TARGET_CHANNEL,
-                                    t["temp_demo"],
-                                    caption=t["caption_demo"],
-                                    parse_mode='html',
-                                    voice_note=True,
-                                    silent=True
-                                )
+                                # ۲. ارسال به ترتیب وویس دمو و موزیک کامل برای هر دو ترک
+                                for t in prepared_tracks:
+                                    await bot_client.send_file(
+                                        TARGET_CHANNEL,
+                                        t["temp_demo"],
+                                        caption=t["caption_demo"],
+                                        parse_mode='html',
+                                        voice_note=True,
+                                        silent=True
+                                    )
 
-                                await bot_client.send_file(
-                                    TARGET_CHANNEL,
-                                    t["temp_full"],
-                                    caption=t["caption_full"],
-                                    parse_mode='html',
-                                    silent=True,
-                                    thumb=COVER_PATH if os.path.exists(COVER_PATH) else None,
-                                    attributes=[DocumentAttributeAudio(duration=t["duration"], title=t["display_title"], performer=t["display_performer"])]
-                                )
+                                    await bot_client.send_file(
+                                        TARGET_CHANNEL,
+                                        t["temp_full"],
+                                        caption=t["caption_full"],
+                                        parse_mode='html',
+                                        silent=True,
+                                        thumb=COVER_PATH if os.path.exists(COVER_PATH) else None,
+                                        attributes=[DocumentAttributeAudio(duration=t["duration"], title=t["display_title"], performer=t["display_performer"])]
+                                    )
 
-                            for t in prepared_tracks:
-                                if os.path.exists(t["temp_demo"]): os.remove(t["temp_demo"])
-                                if os.path.exists(t["temp_full"]): os.remove(t["temp_full"])
-
-                            INCLUDE_PHOTO_CYCLE = not INCLUDE_PHOTO_CYCLE
-                            last_processed_slot = slot_key
-                            set_last_processed_slot(slot_key)
-                            log(f"Broadcast successful! Next slot photo status: {INCLUDE_PHOTO_CYCLE}")
+                                last_processed_slot = slot_key
+                                set_last_processed_slot(slot_key)
+                                log(f"Broadcast successful for {sh:02d}:{sm:02d}!")
+                            finally:
+                                if temp_photo and os.path.exists(temp_photo):
+                                    try: os.remove(temp_photo)
+                                    except Exception: pass
+                                for t in prepared_tracks:
+                                    if os.path.exists(t.get("temp_demo", "")):
+                                        try: os.remove(t["temp_demo"])
+                                        except Exception: pass
+                                    if os.path.exists(t.get("temp_full", "")):
+                                        try: os.remove(t["temp_full"])
+                                        except Exception: pass
 
         except Exception as e:
             log(f"Publisher Worker Error: {e}")
@@ -633,7 +666,7 @@ async def main():
     bot_info = await bot_client.get_me()
     log(f"Bot Client connected successfully as @{bot_info.username}!")
 
-    # همگام‌سازی آهنگ‌های اخیر کانال مقصد برای جلوگیری قطعی از تکرار
+    # قفل و ذخیره آهنگ‌ها و عکس‌های قبلی کانال مقصد
     await load_history_from_target()
 
     await asyncio.gather(
