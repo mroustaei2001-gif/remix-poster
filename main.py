@@ -188,6 +188,18 @@ def get_track_vibe(track_title="", is_foreign=False):
 
 def update_metadata_and_cover(file_path, title, artist, cover_file):
     try:
+        # ترمیم خودکار هدر در صورت معیوب بودن فریم‌های MP3
+        fixed_path = file_path + ".fixed.mp3"
+        repair_cmd = [
+            "ffmpeg", "-y", "-i", file_path,
+            "-codec:a", "copy",
+            "-map_metadata", "-1",
+            fixed_path
+        ]
+        res = subprocess.run(repair_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if res.returncode == 0 and os.path.exists(fixed_path):
+            os.replace(fixed_path, file_path)
+
         try:
             audio = MP3(file_path, ID3=ID3)
         except Exception:
@@ -220,6 +232,7 @@ def update_metadata_and_cover(file_path, title, artist, cover_file):
         audio.save(v2_version=3)
     except Exception as e:
         log(f"Tag Error: {e}")
+
 
 def create_demo_voice_ffmpeg(input_path, output_path, start_sec=40, duration_sec=40):
     cmd = [
