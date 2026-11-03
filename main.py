@@ -1,6 +1,5 @@
 import os
 import sys
-import time
 import asyncio
 import re
 import io
@@ -21,7 +20,7 @@ def log(msg):
     now_str = datetime.now(IRAN_TZ).strftime('%Y-%m-%d %H:%M:%S')
     print(f"[{now_str}] {msg}", flush=True)
 
-log("Starting remix-poster production script (Locked-Thread Architecture)...")
+log("Starting remix-poster production script...")
 
 API_ID = int(os.getenv('API_ID', '2040'))
 API_HASH = os.getenv('API_HASH', 'b18441a1ff607e10a989891a5462e627')
@@ -499,13 +498,13 @@ async def publisher_worker():
 
         await asyncio.sleep(40)
 
-async def init_services():
+async def main():
     log("Connecting user client...")
     await user_client.start()
 
     if not await user_client.is_user_authorized():
         log("Auth Error: STRING_SESSION is unauthorized!")
-        return False
+        return
 
     me = await user_client.get_me()
     log(f"User Client connected successfully as @{me.username or me.id}!")
@@ -515,25 +514,12 @@ async def init_services():
     bot_info = await bot_client.get_me()
     log(f"Bot Client connected successfully as @{bot_info.username}!")
 
-    asyncio.create_task(scan_photos_cycle())
-    asyncio.create_task(scan_music_cycle())
-    asyncio.create_task(publisher_worker())
-    return True
-
-def main():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    success = loop.run_until_complete(init_services())
-    
-    if not success:
-        log("Services initialization failed. Exiting.")
-        return
-
-    log("All tasks scheduled. Main thread entering active synchronous lock.")
-    # قفل کردن ترد اصلی برنامه به صورت همگام تا ریل‌وی هرگز کانتینر را کار خاتمه‌یافته تلقی نکند
-    while True:
-        loop.run_until_complete(asyncio.sleep(1))
-        time.sleep(1)
+    # اجرای همزمان همه تسک‌ها در حلقه اصلی برنامه
+    await asyncio.gather(
+        scan_photos_cycle(),
+        scan_music_cycle(),
+        publisher_worker()
+    )
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())
