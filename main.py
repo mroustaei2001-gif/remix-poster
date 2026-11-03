@@ -147,28 +147,42 @@ async def ensure_connection():
             log(f"Reconnect Error: {e}")
 
 async def load_history_from_target():
-    """همگام‌سازی آهنگ‌های اخیر کانال مقصد برای عدم ارسال مجدد ترک‌های تکراری"""
+    """همگام‌سازی آهنگ‌های اخیر کانال مقصد برای جلوگیری قطعی از ارسال مجدد"""
+    global SEEN_TRACKS
+    # مسدودسازی دستی و قطعی ترک‌های ارسال‌شده امروز
+    blocked_keywords = [
+        "halet khobe", 
+        "khodam miam mibaramet", 
+        "ghatle amd", 
+        "ghahvei", 
+        "khakestari", 
+        "sekte", 
+        "afserdegi", 
+        "adam barfi", 
+        "akharin shab"
+    ]
+    for b in blocked_keywords:
+        SEEN_TRACKS.add(b)
+
     try:
         log(f"Syncing recent tracks from destination channel {TARGET_CHANNEL}...")
         count = 0
-        async for msg in user_client.iter_messages(TARGET_CHANNEL, limit=60):
+        async for msg in user_client.iter_messages(TARGET_CHANNEL, limit=100):
             if msg.audio:
-                raw_title = ""
-                duration = 0
                 for attr in msg.audio.attributes:
                     if isinstance(attr, DocumentAttributeAudio):
-                        raw_title = attr.title or ""
-                        duration = attr.duration or 0
-                clean_title = clean_track_name(raw_title).lower()
-                if clean_title:
-                    SEEN_TRACKS.add(f"{clean_title}_{duration}")
-                    count += 1
-            elif msg.text:
-                m = re.search(r'name:\s*(.+)', msg.text, re.IGNORECASE)
-                if m:
-                    t_name = clean_track_name(m.group(1)).lower()
-                    SEEN_TRACKS.add(t_name)
-                    count += 1
+                        t = clean_track_name(attr.title or "").lower()
+                        if t:
+                            SEEN_TRACKS.add(t)
+                            SEEN_TRACKS.add(f"{t}_{attr.duration or 0}")
+                            count += 1
+            if msg.text:
+                for line in msg.text.splitlines():
+                    if "name:" in line.lower():
+                        cleaned_line = clean_track_name(line.split(":")[-1]).lower()
+                        if cleaned_line:
+                            SEEN_TRACKS.add(cleaned_line)
+                            count += 1
         log(f"Successfully loaded and locked {count} recent tracks from destination channel.")
     except Exception as e:
         log(f"Target History Sync Error: {e}")
