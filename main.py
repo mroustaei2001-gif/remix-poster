@@ -6,6 +6,7 @@ import io
 import random
 import subprocess
 from datetime import datetime, timezone, timedelta
+from aiohttp import web
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.types import DocumentAttributeAudio, InputMediaUploadedPhoto
@@ -498,7 +499,26 @@ async def publisher_worker():
 
         await asyncio.sleep(40)
 
+# وب‌سرور داخلی برای راضی نگه‌داشتن سیستم بازرسی پورت ریل‌وی
+async def handle_ping(request):
+    return web.Response(text="OK")
+
+async def run_server():
+    app = web.Application()
+    app.router.add_get('/', handle_ping)
+    app.router.add_get('/health', handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.getenv("PORT", 8080))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    log(f"Keep-Alive Server listening on port {port}...")
+
 async def main():
+    # ۱. اول سرور شبکه بالا می‌آید تا ریل‌وی پورت را تایید کند
+    await run_server()
+
+    # ۲. سپس اتصال کلاینت‌ها و شروع چرخه‌ها
     log("Connecting user client...")
     await user_client.start()
 
@@ -514,7 +534,6 @@ async def main():
     bot_info = await bot_client.get_me()
     log(f"Bot Client connected successfully as @{bot_info.username}!")
 
-    # اجرای همزمان همه تسک‌ها در حلقه اصلی برنامه
     await asyncio.gather(
         scan_photos_cycle(),
         scan_music_cycle(),
