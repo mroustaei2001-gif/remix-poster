@@ -108,12 +108,20 @@ def clean_track_name(title):
     title = re.sub(r'[\(\[\{].*?[\)\]\}]', '', title)
     return title.strip() or "Remix"
 
-def clean_artist_name(performer):
-    if not performer:
+def is_promotional_tag(text: str) -> bool:
+    if not text:
+        return True
+    # فیلتر تگ‌ها، لینک‌ها، یوزرنیم‌های تلگرامی با فونت انگلیسی/فارسی، کلمات کانال و ریمیکس
+    promo_pattern = r'(?:https?://|t\.me/|telegram\.me/|@|www\.|\.(?:com|org|net|ir|me|co)|کانال|channel|remix|ریمیکس)'
+    return bool(re.search(promo_pattern, text, re.IGNORECASE))
+
+def get_clean_artist(performer: str) -> str:
+    if not performer or is_promotional_tag(performer):
         return ""
-    performer = re.sub(r'@[A-Za-z0-9_]+', '', performer)
-    performer = re.sub(r'https?://\S+', '', performer)
-    return performer.strip()
+    cleaned = re.sub(r'@[A-Za-z0-9_]+', '', performer)
+    cleaned = re.sub(r'https?://\S+', '', cleaned)
+    cleaned = cleaned.strip()
+    return "" if is_promotional_tag(cleaned) else cleaned
 
 async def ensure_connection():
     if not user_client.is_connected():
@@ -385,7 +393,6 @@ async def publisher_worker():
                         if INCLUDE_PHOTO_CYCLE and len(PHOTO_QUEUE) >= 1:
                             p_item = PHOTO_QUEUE.pop(0)
                             try:
-                                # واکشی پیام تازه برای دور زدن انقضای فایل
                                 fresh_photo_msg = await user_client.get_messages(p_item['chat'], ids=p_item['id'])
                                 if fresh_photo_msg and fresh_photo_msg.media:
                                     temp_photo = f"photo_{p_item['id']}.jpg"
@@ -398,7 +405,6 @@ async def publisher_worker():
                         for idx in range(2):
                             m_item = MUSIC_QUEUE.pop(0)
                             try:
-                                # واکشی پیام تازه برای دور زدن انقضای فایل
                                 fresh_music_msg = await user_client.get_messages(m_item['chat'], ids=m_item['id'])
                                 if not fresh_music_msg or not fresh_music_msg.audio:
                                     continue
@@ -408,14 +414,19 @@ async def publisher_worker():
                                 duration = m_item.get('duration') or 0
 
                                 track_name = clean_track_name(raw_title)
-                                clean_artist = clean_artist_name(raw_performer)
+                                valid_artist = get_clean_artist(raw_performer)
 
-                                if clean_artist:
+                                clean_target = TARGET_CHANNEL.replace('@', '').replace('https://t.me/', '')
+
+                                # سیاست مدنظر شما:
+                                # ۱. اگر اسم خواننده واقعی وجود داشت -> عنوان: Track - @channel | زیرش: Artist
+                                # ۲. اگر خالی بود یا تگ تبلیغاتی/کانال داشت -> عنوان: Track | زیرش: T.me/channel
+                                if valid_artist:
                                     display_title = f"{track_name} - @{clean_target}"
-                                    display_performer = clean_artist
+                                    display_performer = valid_artist
                                 else:
                                     display_title = track_name
-                                    display_performer = f"Telegram: @{clean_target}"
+                                    display_performer = f"T.me/{clean_target}"
 
                                 temp_full = f"full_{fresh_music_msg.id}.mp3"
                                 temp_demo = f"demo_{fresh_music_msg.id}.ogg"
